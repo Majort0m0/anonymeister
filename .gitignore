@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 output/*
 !output/.gitkeep
+/settings.json
 .DS_Store
 .claude/
 

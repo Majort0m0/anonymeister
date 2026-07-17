@@ -95,3 +95,24 @@ def make_person_pseudonymizer(language: str = "de") -> Callable[[str], str]:
         return assigned[original_text]
 
     return fn
+
+
+def make_person_numberer() -> Callable[[str], str]:
+    """Return a closure that maps distinct PERSON texts to consistent numbered
+    placeholders ("[PERSON1]", "[PERSON2]", ...), assigned in first-seen order.
+
+    Same per-call-instance consistency contract as make_person_pseudonymizer():
+    it stays fully redacted (no real or fake name is exposed) while still
+    letting a reader tell distinct people in the document apart. As with the
+    pseudonymizer, the mapping key is the literal matched text, so different
+    surface forms of the same person (full name vs. surname only) get
+    different numbers — there is no cross-mention coreference resolution.
+    """
+    assigned: dict[str, str] = {}
+
+    def fn(original_text: str) -> str:
+        if original_text not in assigned:
+            assigned[original_text] = f"[PERSON{len(assigned) + 1}]"
+        return assigned[original_text]
+
+    return fn

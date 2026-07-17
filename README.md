@@ -24,9 +24,11 @@ Modelle (kein Cloud-API-Aufruf).
 - **Workflow**: zweistufig — zuerst "Analysieren" (zeigt erkannte Kategorien
   mit Beispielen an, ohne bereits etwas zu schwärzen), dann wählt man aus,
   welche Kategorien tatsächlich anonymisiert werden sollen, bevor
-  "Anonymisierung anwenden" den finalen Text erzeugt. Für Namen kann
-  wahlweise geschwärzt ("[PERSON]") oder pseudonymisiert werden (Ersetzung
-  durch einen erfundenen, aber im Dokument konsistenten Fantasienamen).
+  "Anonymisierung anwenden" den finalen Text erzeugt. Für Namen gibt es drei
+  Modi: geschwärzt (generisches "[PERSON]"), nummeriert ("[PERSON1]",
+  "[PERSON2]", … — unterscheidet mehrere Personen im Dokument, ohne echte
+  Namen preiszugeben) oder pseudonymisiert (Ersetzung durch einen erfundenen,
+  aber im Dokument konsistenten Fantasienamen).
 - **Transkription**: `faster-whisper` für Audio-Input
 - **Zusammenfassung**: wird immer aus dem final anonymisierten Text erzeugt,
   nie aus dem Original — unabhängig davon, welche Kategorien der Nutzer von
@@ -70,13 +72,31 @@ python -m spacy download en_core_web_lg
 
 Voraussetzungen auf dem System:
 - [Ollama](https://ollama.com/download) installiert und gestartet, Modell
-  gepullt: `ollama pull gemma4:12b` (Modellname in `app/config.py` anpassbar)
-- `ffmpeg` auf dem PATH (macOS: `brew install ffmpeg`)
+  gepullt: `ollama pull gemma4:12b` (Standardmodell — im "Systemstatus"-Bereich
+  der App direkt umstellbar, siehe unten; Fallback in `app/config.py`)
+
+(Audiotranskription braucht kein System-`ffmpeg` — `faster-whisper` dekodiert
+Audio über die mitgelieferten PyAV/FFmpeg-Bibliotheken, ohne externe
+Abhängigkeit.)
 
 Der "Systemstatus"-Bereich in der App zeigt an, was fehlt, und kann spaCy-
-Modelle sowie das Ollama-Modell direkt aus der UI nachladen. `ffmpeg` und eine
-fehlende Ollama-Installation müssen manuell installiert werden (die App
-installiert keine Systempakete ohne Zutun).
+Modelle sowie das Ollama-Modell direkt aus der UI nachladen. Eine fehlende
+Ollama-Installation muss manuell installiert werden (die App installiert
+keine Systempakete ohne Zutun).
+
+Welches Ollama-Modell für Tiefencheck und Zusammenfassung genutzt wird, ist
+dort ebenfalls einstellbar — per Dropdown mit kuratierten, nach RAM/VRAM-
+Bedarf sortierten Empfehlungen (`gemma4:e2b`/`e4b`/`12b`/`26b`), oder per
+Freitext für jedes andere lokal gepullte Modell. Die Wahl wird lokal
+gespeichert und bleibt über Neustarts hinweg erhalten; ein gesetzter
+`OLLAMA_MODEL`-Umgebungsvariablenwert (z. B. im Docker-Setup) hat weiterhin
+Vorrang vor der UI-Auswahl.
+
+Genauso lässt sich dort die **faster-whisper-Modellgröße** für die
+Audiotranskription umstellen (`tiny`/`small` (Empfehlung, Standard)/`medium`/
+`large-v3`, RAM-Bedarf jeweils angegeben, oder Freitext für z. B.
+`large-v3-turbo`) — gleiche Persistenz- und Env-Var-Vorrang-Logik wie beim
+Ollama-Modell (`WHISPER_MODEL_SIZE`).
 
 ## Starten
 
@@ -129,6 +149,23 @@ verifiziert — `.github/workflows/build.yml` baut alle drei Plattformen
 automatisch auf ihren jeweiligen nativen GitHub-Actions-Runnern, sobald dieses
 Repo auf GitHub liegt (Tag `v*` oder manuell auslösbar); das ist der
 verlässlichste Weg zu einem echten, geprüften Windows-/Linux-Build.
+
+**macOS: „Anonymizer.app ist beschädigt" / „konnte nicht überprüft werden".**
+Die DMG ist nur ad-hoc signiert, nicht mit einem Apple Developer-Zertifikat
+notariert — ein Apple Developer-Account kostet 99 $/Jahr und steht für dieses
+Projekt nicht zur Verfügung. Gatekeeper blockiert deshalb den ersten Start.
+Die App trotzdem öffnen:
+
+1. **Systemeinstellungen → Datenschutz & Sicherheit** öffnen, runterscrollen.
+   Dort erscheint „Anonymizer.app wurde blockiert…" mit einem Button
+   **„Trotzdem öffnen"** — klicken und im folgenden Dialog bestätigen.
+2. Falls dort nichts erscheint, per Terminal das Quarantäne-Flag entfernen:
+   ```bash
+   xattr -cr /Applications/Anonymizer.app
+   ```
+3. Alternativ: Rechtsklick (bzw. Ctrl-Klick) auf die App → „Öffnen" → im
+   Dialog nochmal „Öffnen" bestätigen (funktioniert auf manchen
+   macOS-Versionen nicht mehr zuverlässig, dann Variante 1 oder 2 nutzen).
 
 spaCy-Modelle und Ollama werden bewusst **nicht** mit ins Paket gebündelt
 (zusammen 500MB+ und bereits über den „Systemstatus"-Bereich selbst

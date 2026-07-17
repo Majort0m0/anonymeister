@@ -57,11 +57,11 @@ pipeline module — they define the shape every stage passes to the next.
 
 **Two-step flow, orchestrated by `app/pipeline/pipeline.py`**: the app shows the
 user what PII it found *before* redacting anything, so they can exclude specific
-categories (e.g. keep locations visible) or choose pseudonymization for names,
+categories (e.g. keep locations visible) or choose how names are handled,
 instead of an all-or-nothing single-shot pipeline. `analyze()` /
 `analyze_file()` do detection only and return a `PendingState` (kept server-side,
 see below) plus a `list[DetectedCategory]` for the review UI; `finalize()` takes
-the user's `excluded_categories` + `pseudonymize_person` choice and returns a
+the user's `excluded_categories` + `person_mode` choice and returns a
 `FinalizeOutput` (a plain dataclass, not the HTTP-facing pydantic model —
 it carries the transcript/summary markdown text and, for tabular sources, raw
 output file bytes, none of which belong in a JSON response body).
@@ -113,20 +113,39 @@ callers of `analyze*`/`finalize`.
      `app/schemas.py`'s `DetectedCategory`).
 3. **Apply** (`anonymize.py`'s `apply_anonymization()`, called from
    `pipeline.finalize()`) — redacts, skipping any `entity_type` in
-   `excluded_types` (left as original text). `pseudonymize_person=True` routes
-   `PERSON` through a Presidio `"custom"` operator backed by
-   `app/pipeline/pseudonymize.py`'s `make_person_pseudonymizer()` — a closure
-   that maps each distinct matched name to a consistent fake full name. `finalize()`
-   builds exactly ONE `person_pseudonymizer` per call and threads it through
-   every `apply_anonymization()` call it makes — the main-text redaction AND
-   (for tabular sources) every per-cell redaction below — so the same real name
-   maps to the same fake name across the transcript, the summary, and the
+   `excluded_types` (left as original text). `person_mode` (schemas.py's
+   `PersonMode` — `REDACT`/`NUMBERED`/`PSEUDONYMIZE`) controls PERSON
+   specifically: `REDACT` (default) is the generic `[PERSON]` every other
+   category also gets; `NUMBERED` and `PSEUDONYMIZE` both route `PERSON`
+   through a Presidio `"custom"` operator backed by a closure from
+   `app/pipeline/pseudonymize.py` (`make_person_numberer()` ->
+   `[PERSON1]`/`[PERSON2]`/... so a reader can tell distinct people apart in
+   the redacted text without seeing any name; `make_person_pseudonymizer()` ->
+   a consistent fake full name instead) that maps each distinct matched name
+   text to a consistent label. Both closures assign lazily on first call and
+   never reassign an existing key — but Presidio's `AnonymizerEngine` does not
+   invoke custom-operator callbacks in left-to-right text order (observed: it
+   processes right-to-left, to keep not-yet-replaced spans' offsets valid
+   while replacing), so `apply_anonymization()` pre-seeds the closure by
+   calling it once per distinct PERSON span sorted by `result.start` *before*
+   handing control to Presidio — without this, `[PERSON1]` could land on
+   whichever name happens to sit last in the text instead of the
+   first-mentioned one, which would undermine numbered mode's whole point
+   (and was silently mis-ordering pseudonymized fake-name assignment too,
+   before this fix). `finalize()` builds exactly ONE `person_replacer` per
+   call (when `person_mode != REDACT`) and threads it through every
+   `apply_anonymization()` call it makes — the main-text redaction AND (for
+   tabular sources) every per-cell redaction below — so the same real name
+   maps to the same label across the transcript, the summary, and the
    structured-format re-export. `apply_anonymization()` accepts an optional
-   `person_pseudonymizer` param for exactly this reuse; omitting it builds a
-   fresh (so only self-consistent) one. The PII audit count is derived from
-   `anonymized.items` (what was *actually* replaced after conflict resolution),
-   not the raw analyzer results — raw results can include overlapping
-   candidates that never make it into the output text.
+   `person_replacer` param for exactly this reuse; omitting it builds a fresh
+   (so only self-consistent) one. The frontend's category-review UI exposes
+   this as a three-way segmented control (`app/web/static/app.js`'s
+   `buildPersonToggle()`) shown only on the `PERSON` row
+   (`DetectedCategory.is_person`). The PII audit count is derived from
+   `anonymized.items` (what was *actually* replaced after conflict
+   resolution), not the raw analyzer results — raw results can include
+   overlapping candidates that never make it into the output text.
 4. **Deep-check** (`app/pipeline/deep_check.py`, optional, toggled by
    `PipelineOptions.deep_check`) — split into `find_candidates()` (the LLM call
    + JSON parsing, run once during `analyze()` against a fully-redacted
@@ -158,7 +177,7 @@ callers of `analyze*`/`finalize`.
    `source_suffix`) for these extensions only (audio/prose/clipboard leave
    them `None`). `finalize()` builds a per-cell `transform(text) -> text`
    closure — re-running `anonymize.analyze()` + `apply_anonymization()` (with
-   the SAME `excluded_categories`/`person_pseudonymizer` as the main text) and
+   the SAME `excluded_categories`/`person_mode`/`person_replacer` as the main text) and
    `deep_check.apply_candidates()` fresh on each individual cell's isolated
    text — then dispatches to `app/pipeline/rewrite_excel.py` /
    `rewrite_csv.py` / `rewrite_json.py` / `rewrite_ods.py`'s `rewrite_*()`,
@@ -223,10 +242,58 @@ wraps the blocking `analyze_file()` call in `starlette.concurrency.run_in_thread
 instead.
 
 **Setup/dependency checking** (`app/pipeline/setup_check.py`) backs the frontend's
-"Systemstatus" panel: checks ffmpeg, Ollama (installed vs. running vs. model
-pulled), and spaCy models, with safe auto-fix for Ollama model pulls and spaCy
-downloads. It deliberately does *not* auto-install ffmpeg or Ollama itself
-(installing system packages without explicit user action is out of scope).
+"Systemstatus" panel: checks Ollama (installed vs. running vs. model pulled)
+and spaCy models, with safe auto-fix for Ollama model pulls and spaCy
+downloads. It deliberately does *not* auto-install Ollama itself (installing
+system packages without explicit user action is out of scope). There is
+deliberately no `ffmpeg` check: `faster-whisper` decodes audio via PyAV, which
+bundles its own FFmpeg libraries statically — confirmed by decoding a file
+with `PATH` cleared entirely. An earlier version of this module checked for a
+system `ffmpeg` binary on `PATH` anyway; this was actively misleading (it
+could report "missing" even after `brew install ffmpeg`, since a macOS `.app`
+launched from Finder doesn't inherit Homebrew's PATH additions from the
+user's shell profile — and "fixing" that detection wouldn't have changed
+whether transcription actually worked, since it was never used for decoding).
+
+**Ollama model and Whisper size are both user-configurable at runtime, not
+just at build time** (`app/settings.py`). The desktop app ships with
+`OLLAMA_MODEL` hardcoded to `gemma4:12b` and `WHISPER_MODEL_SIZE` to `small`
+in `app/config.py` (whatever was already pulled/reasonable on the machine
+this app was built on) — poor defaults for other machines with different
+RAM/VRAM, and there was previously no way to change either short of setting
+an env var before launch, which a packaged `.app` user can't do. The
+Systemstatus panel has two independent model pickers for this
+(`GET`/`POST /api/settings/ollama-model` and `.../whisper-model`), sharing
+one UI pattern (`app/web/static/app.js`'s `initModelPicker()` factory,
+parametrized by element-id prefix and endpoint name): pick from a curated,
+resource-labeled list (`app.config.CURATED_OLLAMA_MODELS` —
+`gemma4:e2b`/`e4b`/`12b`/`26b` per `ollama.com/library/gemma4`'s published
+tags; `app.config.CURATED_WHISPER_MODELS` — `tiny`/`small`/`medium`/
+`large-v3` per faster-whisper/CTranslate2 community RAM benchmarks, one entry
+each marked `recommended`) or type any other locally available model/size as
+free text. Both choices persist to one shared `settings.json` in the same
+per-OS app-data directory as `OUTPUT_DIR` (see `app.config.APP_DATA_DIR` —
+`app/settings.py`'s `_SETTINGS_PATH`), and survive restarts.
+`app.settings.get_ollama_model()`/`get_whisper_model_size()` (both built on
+the shared `_get_setting()`/`_set_setting()` helpers) layer this over
+`app.config`'s hardcoded defaults: an explicit `OLLAMA_MODEL`/
+`WHISPER_MODEL_SIZE` env var (e.g. set by `docker-compose.yml`) always wins
+over the persisted UI choice, since it's a deliberate deployment-level
+override rather than a locally-clicked preference — checked via
+`env_var in os.environ`, not by comparing values, so a UI choice that
+happens to match the env var's value doesn't accidentally bypass this
+precedence the next time the env var is unset. Every call site that actually
+loads a model (`app/llm/ollama_client.py`, `app/pipeline/setup_check.py`,
+`app/pipeline/transcription.py`) calls the getter at call time rather than
+importing the config constant as a plain module-level name — the latter
+would bind a stale copy at import time that a later UI change couldn't
+affect, since Python name bindings don't follow the source module after
+`from x import y`. `transcription.py`'s module-level `WhisperModel` cache is
+additionally keyed by the loaded size (`_model_size`), reloading if the
+Systemstatus picker's choice changed since the last transcription — a plain
+"load once, keep forever" cache (the pre-existing pattern before this
+feature) would otherwise silently keep serving the old size for the rest of
+the process's lifetime after a UI change.
 
 **pywebview downloads are off by default on every backend** (Cocoa, EdgeChromium,
 GTK, Qt — not macOS-specific). `app/main.py` sets

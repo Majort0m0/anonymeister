@@ -19,6 +19,12 @@ class OutputMode(str, Enum):
     BOTH = "both"
 
 
+class PersonMode(str, Enum):
+    REDACT = "redact"  # every PERSON match -> generic "[PERSON]"
+    NUMBERED = "numbered"  # distinct names -> "[PERSON1]", "[PERSON2]", ... (first-seen order)
+    PSEUDONYMIZE = "pseudonymize"  # distinct names -> consistent fake full names
+
+
 class SourceKind(str, Enum):
     TEXT = "text"      # .txt, .md, clipboard paste
     DOCX = "docx"      # .docx (legacy .doc is rejected with an actionable error)
@@ -56,7 +62,8 @@ class DetectedCategory(BaseModel):
     source: str  # "presidio" | "llm_deep_check"
     samples: list[str] = Field(default_factory=list)
     is_person: bool = False  # true only for Presidio's PERSON category — the
-    # frontend uses this to decide whether to offer the pseudonymize toggle
+    # frontend uses this to decide whether to offer the person-mode toggle
+    # (Schwärzen/Nummerieren/Pseudonymisieren)
 
 
 class PendingAnalysis(BaseModel):
@@ -75,7 +82,7 @@ class PendingAnalysis(BaseModel):
 class FinalizeRequest(BaseModel):
     token: str
     excluded_categories: list[str] = Field(default_factory=list)
-    pseudonymize_person: bool = False
+    person_mode: PersonMode = PersonMode.REDACT
 
 
 class IngestResult(BaseModel):

@@ -21,8 +21,8 @@ Legt fest, was am Ende erzeugt wird. Das Transkript ist der vollständige anonym
 **Kategorie abwählen**
 Lässt eine erkannte Kategorie unangetastet im Ergebnistext stehen, statt sie zu schwärzen — z. B. wenn Ortsangaben für den Zweck des Dokuments unproblematisch sind.
 
-**Schwärzen vs. Pseudonymisieren (nur bei Namen)**
-"Schwärzen" ersetzt jeden Namen durch den Platzhalter `[PERSON]`. "Pseudonymisieren" ersetzt jeden Namen stattdessen durch einen erfundenen, aber **konsistenten** Fantasienamen — derselbe echte Name bekommt überall im Dokument (und, falls vorhanden, auch in einer zusätzlichen Tabellen-Kopie) denselben Fantasienamen. Nützlich, wenn die Daten danach noch lesbar/nutzbar bleiben sollen.
+**Schwärzen vs. Nummerieren vs. Pseudonymisieren (nur bei Namen)**
+"Schwärzen" ersetzt jeden Namen durch den generischen Platzhalter `[PERSON]` — bei mehreren Personen im Dokument sind sie danach nicht mehr unterscheidbar. "Nummerieren" ersetzt stattdessen durch `[PERSON1]`, `[PERSON2]`, … — unterschiedliche Personen bleiben so auseinanderhaltbar, ohne dass ein echter oder erfundener Name sichtbar wird. "Pseudonymisieren" ersetzt jeden Namen durch einen erfundenen, aber **konsistenten** Fantasienamen. Bei Nummerieren wie Pseudonymisieren gilt: derselbe echte Name bekommt überall im Dokument (und, falls vorhanden, auch in einer zusätzlichen Tabellen-Kopie) dasselbe Label — nützlich, wenn die Daten danach noch lesbar/nutzbar bleiben sollen. Achtung: Die Zuordnung erfolgt über den exakt erkannten Textabschnitt — wird dieselbe Person mal mit vollem Namen, mal nur mit Nachnamen erwähnt, kann das zwei unterschiedliche Nummern/Pseudonyme ergeben.
 
 **Anonymisierungs-Protokoll**
 Die Tabelle am Ende jeder Ausgabedatei listet auf, welche Kategorien wie oft erkannt und ersetzt wurden — damit das Ergebnis nachvollziehbar bleibt, statt "unsichtbar" verändert zu werden.
@@ -41,15 +41,15 @@ Bei Tabellenformaten (Excel/CSV/JSON/ODS) entsteht zusätzlich zum Markdown-Tran
 Die App nutzt zwei Arten lokaler KI-Modelle, beide laufen vollständig auf diesem Rechner:
 
 **Ollama (Sprachmodell)**
-Wird für den Tiefencheck und die Zusammenfassung gebraucht. Falls nicht installiert: [ollama.com/download](https://ollama.com/download), danach das konfigurierte Modell laden (z. B. `ollama pull gemma4:12b`).
+Wird für den Tiefencheck und die Zusammenfassung gebraucht. Falls nicht installiert: [ollama.com/download](https://ollama.com/download), danach das gewählte Modell laden (z. B. `ollama pull gemma4:12b`). Welches Modell genutzt wird, lässt sich im Bereich „Systemstatus" per Dropdown umstellen — kuratierte Vorschläge nach RAM/VRAM-Bedarf sortiert (kleiner = weniger Ressourcen, größer = bessere Qualität), oder als Freitext jedes andere lokal gepullte Modell.
 
 **faster-whisper (Spracherkennung)**
-Wird nur für Audio-Dateien gebraucht und lädt das gewählte Modell beim ersten Gebrauch automatisch herunter — danach läuft es offline. Voraussetzung ist `ffmpeg` auf dem System (macOS: `brew install ffmpeg`).
+Wird nur für Audio-Dateien gebraucht und lädt das gewählte Modell beim ersten Gebrauch automatisch herunter — danach läuft es offline. Kein System-`ffmpeg` nötig, das ist bereits in `faster-whisper` enthalten. Die Modellgröße lässt sich ebenfalls im Bereich „Systemstatus" umstellen — von `tiny` (sehr sparsam, weniger genau) bis `large-v3` (beste Qualität, braucht deutlich mehr Arbeitsspeicher); Standard ist `small` als guter Kompromiss.
 
 **spaCy-Sprachmodelle**
 Werden für die Grunderkennung (Namen, Orte, …) gebraucht, einmalig zu installieren.
 
-Der Bereich „Systemstatus" unten in der App zeigt an, was davon fehlt, und kann fehlende Modelle direkt nachladen. Nur bereits installierte Systemprogramme (Ollama, ffmpeg) müssen manuell eingerichtet werden.
+Der Bereich „Systemstatus" unten in der App zeigt an, was davon fehlt, und kann fehlende Modelle direkt nachladen. Nur eine bereits vorausgesetzte Ollama-Installation muss manuell eingerichtet werden.
 
 ## Datenschutz: was passiert mit den Daten?
 

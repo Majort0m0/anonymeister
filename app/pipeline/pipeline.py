@@ -3,8 +3,8 @@ categories) -> finalize (redact -> deep_check -> summarize -> render).
 
 Two-step flow: `analyze_file`/`analyze_clipboard` (via `analyze`) detect PII
 and return categories for the user to review, without redacting anything yet.
-`finalize` takes the user's category exclusions (and pseudonymize choice) and
-produces a `FinalizeOutput`. The PendingState in between is kept server-side
+`finalize` takes the user's category exclusions (and person-mode choice —
+redact/numbered/pseudonymize) and produces a `FinalizeOutput`. The PendingState in between is kept server-side
 (see app.server's token cache) — it is not a pydantic model because it holds
 Presidio's internal RecognizerResult objects and, for tabular source formats,
 the original file bytes, none of which cross the HTTP boundary.
@@ -32,7 +32,7 @@ from app.pipeline.ingest import (
     STRUCTURED_REWRITE_EXTENSIONS,
     ingest_file,
 )
-from app.pipeline.pseudonymize import make_person_pseudonymizer
+from app.pipeline.pseudonymize import make_person_numberer, make_person_pseudonymizer
 from app.pipeline.render_markdown import render_summary, render_transcript
 from app.pipeline.rewrite_csv import rewrite_csv
 from app.pipeline.rewrite_excel import output_suffix_for as excel_output_suffix_for
@@ -41,7 +41,7 @@ from app.pipeline.rewrite_json import rewrite_json
 from app.pipeline.rewrite_ods import rewrite_ods
 from app.pipeline.summarize import summarize_text
 from app.pipeline.transcription import transcribe_audio
-from app.schemas import DetectedCategory, OutputMode, PiiEntity, PipelineOptions
+from app.schemas import DetectedCategory, OutputMode, PersonMode, PiiEntity, PipelineOptions
 
 
 @dataclass
@@ -160,19 +160,23 @@ def _rewrite_structured(
 def finalize(
     state: PendingState,
     excluded_categories: set[str],
-    pseudonymize_person: bool,
+    person_mode: PersonMode,
 ) -> FinalizeOutput:
     # Built once and reused for the transcript AND every structured-format
-    # cell below, so the same real name maps to the same fake name across
-    # every output produced from this one finalize() call.
-    person_pseudonymizer = make_person_pseudonymizer(state.language) if pseudonymize_person else None
+    # cell below, so the same real name maps to the same label (number or
+    # fake name) across every output produced from this one finalize() call.
+    person_replacer = None
+    if person_mode == PersonMode.PSEUDONYMIZE:
+        person_replacer = make_person_pseudonymizer(state.language)
+    elif person_mode == PersonMode.NUMBERED:
+        person_replacer = make_person_numberer()
 
     anon_result = anonymize.apply_anonymization(
         state.raw_text,
         state.presidio_results,
         excluded_types=excluded_categories,
-        pseudonymize_person=pseudonymize_person,
-        person_pseudonymizer=person_pseudonymizer,
+        person_mode=person_mode,
+        person_replacer=person_replacer,
     )
     text = anon_result.anonymized_text
     pii_audit = list(anon_result.entities)
@@ -220,8 +224,8 @@ def finalize(
                 cell_text,
                 cell_results,
                 excluded_types=excluded_categories,
-                pseudonymize_person=pseudonymize_person,
-                person_pseudonymizer=person_pseudonymizer,
+                person_mode=person_mode,
+                person_replacer=person_replacer,
             )
             cell_text_out = cell_anon.anonymized_text
             if state.deep_check_requested:

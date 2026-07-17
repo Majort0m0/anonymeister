@@ -114,6 +114,8 @@ const statusPanel = document.getElementById("status-panel");
 const statusLoading = document.getElementById("status-loading");
 const dependencyList = document.getElementById("dependency-list");
 
+const MODEL_PICKER_CUSTOM_VALUE = "__custom__";
+
 let selectedFile = null;
 
 // Carries the pending-analysis token and its categories from phase 2 render
@@ -419,6 +421,13 @@ function buildSegmentedRadio(name, value, text, checked) {
   return label;
 }
 
+const PERSON_MODE_DESCRIPTIONS = {
+  redact: "Ersetzt jede Namensnennung durch den allgemeinen Platzhalter „[PERSON]“.",
+  numbered:
+    "Nummeriert unterschiedliche Namen durchgehend („[PERSON1]“, „[PERSON2]“, …) — hilfreich, um mehrere Personen im Text auseinanderzuhalten, ohne echte Namen preiszugeben.",
+  pseudonymize: "Ersetzt Namen durch erfundene, aber konsistente Fantasienamen.",
+};
+
 function buildPersonToggle() {
   const wrap = document.createElement("div");
   wrap.className = "review-person-toggle";
@@ -428,18 +437,22 @@ function buildPersonToggle() {
   segmented.setAttribute("role", "radiogroup");
   segmented.setAttribute("aria-label", "Namen-Behandlung");
 
-  const redactOption = buildSegmentedRadio("person-mode", "redact", "Schwärzen", true);
-  const pseudoOption = buildSegmentedRadio("person-mode", "pseudonymize", "Pseudonymisieren", false);
-  segmented.append(redactOption, pseudoOption);
-
-  for (const option of [redactOption, pseudoOption]) {
-    const input = option.querySelector("input");
-    input.addEventListener("change", () => updateSegmentedSelected(segmented));
-  }
-
   const desc = document.createElement("p");
   desc.className = "review-person-toggle-desc";
-  desc.textContent = "Ersetzt Namen durch erfundene, aber konsistente Fantasienamen.";
+  desc.textContent = PERSON_MODE_DESCRIPTIONS.redact;
+
+  const redactOption = buildSegmentedRadio("person-mode", "redact", "Schwärzen", true);
+  const numberedOption = buildSegmentedRadio("person-mode", "numbered", "Nummerieren", false);
+  const pseudoOption = buildSegmentedRadio("person-mode", "pseudonymize", "Pseudonymisieren", false);
+  segmented.append(redactOption, numberedOption, pseudoOption);
+
+  for (const option of [redactOption, numberedOption, pseudoOption]) {
+    const input = option.querySelector("input");
+    input.addEventListener("change", () => {
+      updateSegmentedSelected(segmented);
+      desc.textContent = PERSON_MODE_DESCRIPTIONS[input.value];
+    });
+  }
 
   wrap.append(segmented, desc);
   return wrap;
@@ -535,13 +548,13 @@ function getExcludedCategories() {
   return excluded;
 }
 
-function getPseudonymizePerson() {
+function getPersonMode() {
   const personItem = reviewList.querySelector('.review-item[data-is-person="true"]');
-  if (!personItem) return false;
+  if (!personItem) return "redact";
   const checkbox = personItem.querySelector(".review-item-checkbox");
-  if (!checkbox.checked) return false; // excluded entirely -> nothing to pseudonymize
+  if (!checkbox.checked) return "redact"; // excluded entirely -> mode is moot
   const checkedRadio = personItem.querySelector('input[name="person-mode"]:checked');
-  return checkedRadio ? checkedRadio.value === "pseudonymize" : false;
+  return checkedRadio ? checkedRadio.value : "redact";
 }
 
 reviewRestartBtn.addEventListener("click", resetToInputPhase);
@@ -555,7 +568,7 @@ finalizeBtn.addEventListener("click", async () => {
   finalizeLoading.classList.remove("hidden");
 
   const excludedCategories = getExcludedCategories();
-  const pseudonymizePerson = getPseudonymizePerson();
+  const personMode = getPersonMode();
 
   try {
     const response = await fetch("/api/finalize", {
@@ -564,7 +577,7 @@ finalizeBtn.addEventListener("click", async () => {
       body: JSON.stringify({
         token: currentToken,
         excluded_categories: excludedCategories,
-        pseudonymize_person: pseudonymizePerson,
+        person_mode: personMode,
       }),
     });
 
@@ -789,6 +802,13 @@ function renderDependencies(statuses) {
       body.appendChild(detail);
     }
 
+    if (!status.available && status.install_hint) {
+      const hint = document.createElement("div");
+      hint.className = "dependency-hint";
+      hint.textContent = status.install_hint;
+      body.appendChild(hint);
+    }
+
     li.appendChild(body);
 
     if (!status.available) {
@@ -852,6 +872,99 @@ async function fixDependency(name, button) {
   }
 }
 
+// Shared by both Systemstatus model pickers (Ollama chat model, Whisper
+// size): same curated-select-plus-free-text-fallback UI and the same
+// GET/POST /api/settings/<endpoint> shape, just different element ids and
+// backend endpoint.
+function initModelPicker({ idPrefix, endpoint }) {
+  const select = document.getElementById(`${idPrefix}-select`);
+  const custom = document.getElementById(`${idPrefix}-custom`);
+  const applyBtn = document.getElementById(`${idPrefix}-apply`);
+  const status = document.getElementById(`${idPrefix}-status`);
+
+  function populate(currentModel, curated) {
+    select.innerHTML = "";
+    for (const option of curated) {
+      const opt = document.createElement("option");
+      opt.value = option.name;
+      opt.textContent = option.recommended
+        ? `${option.name} — ${option.label} (Empfehlung)`
+        : `${option.name} — ${option.label}`;
+      select.appendChild(opt);
+    }
+    const customOpt = document.createElement("option");
+    customOpt.value = MODEL_PICKER_CUSTOM_VALUE;
+    customOpt.textContent = "Andere (Freitext)…";
+    select.appendChild(customOpt);
+
+    const isCurated = curated.some((option) => option.name === currentModel);
+    if (isCurated) {
+      select.value = currentModel;
+      custom.classList.add("hidden");
+    } else {
+      select.value = MODEL_PICKER_CUSTOM_VALUE;
+      custom.classList.remove("hidden");
+      custom.value = currentModel;
+    }
+  }
+
+  async function load() {
+    try {
+      const response = await fetch(`/api/settings/${endpoint}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      populate(data.model, data.curated);
+    } catch (err) {
+      // Systemstatus panel already surfaces server-unreachable via
+      // loadDependencies(); nothing more to show here.
+    }
+  }
+
+  select.addEventListener("change", () => {
+    custom.classList.toggle("hidden", select.value !== MODEL_PICKER_CUSTOM_VALUE);
+  });
+
+  applyBtn.addEventListener("click", async () => {
+    const model =
+      select.value === MODEL_PICKER_CUSTOM_VALUE ? custom.value.trim() : select.value;
+    if (!model) {
+      status.textContent = "Bitte einen Modellnamen angeben.";
+      status.className = "model-picker-status error";
+      return;
+    }
+
+    applyBtn.disabled = true;
+    status.textContent = "Wird übernommen…";
+    status.className = "model-picker-status";
+    try {
+      const response = await fetch(`/api/settings/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        status.textContent = data.error || "Übernehmen fehlgeschlagen.";
+        status.className = "model-picker-status error";
+        return;
+      }
+      status.textContent = `Aktives Modell: ${data.model}`;
+      status.className = "model-picker-status success";
+      await loadDependencies();
+    } catch (err) {
+      status.textContent = "Übernehmen fehlgeschlagen: Verbindung zum Server nicht möglich.";
+      status.className = "model-picker-status error";
+    } finally {
+      applyBtn.disabled = false;
+    }
+  });
+
+  return { load };
+}
+
+const ollamaModelPicker = initModelPicker({ idPrefix: "ollama-model", endpoint: "ollama-model" });
+const whisperModelPicker = initModelPicker({ idPrefix: "whisper-model", endpoint: "whisper-model" });
+
 statusToggle.addEventListener("click", () => {
   const expanded = statusToggle.getAttribute("aria-expanded") === "true";
   const next = !expanded;
@@ -859,6 +972,8 @@ statusToggle.addEventListener("click", () => {
   statusPanel.classList.toggle("hidden", !next);
   if (next) {
     loadDependencies();
+    ollamaModelPicker.load();
+    whisperModelPicker.load();
   }
 });
 

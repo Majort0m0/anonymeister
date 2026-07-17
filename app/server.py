@@ -5,7 +5,7 @@ of raw tracebacks or a crashed process.
 
 Two-step flow: /api/analyze-* detects PII and returns categories for the user
 to review, without redacting anything; /api/finalize takes the user's
-category exclusions (and pseudonymize choice) and produces the final result.
+category exclusions (and person-mode choice) and produces the final result.
 The PendingState between the two calls holds Presidio's internal result
 objects (not JSON-serializable in any useful way) and raw source text, so it
 is kept server-side in `_pending`, keyed by an opaque per-analysis token —
@@ -35,7 +35,13 @@ from langdetect import LangDetectException, detect
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from app.config import DEFAULT_LANGUAGE, OUTPUT_DIR, SPACY_MODELS
+from app.config import (
+    CURATED_OLLAMA_MODELS,
+    CURATED_WHISPER_MODELS,
+    DEFAULT_LANGUAGE,
+    OUTPUT_DIR,
+    SPACY_MODELS,
+)
 from app.pipeline.pipeline import PendingState, analyze, analyze_file, finalize
 from app.pipeline.render_markdown import render_summary, render_transcript
 from app.pipeline.setup_check import attempt_auto_install, check_dependencies
@@ -47,6 +53,12 @@ from app.schemas import (
     PipelineOptions,
     PipelineResult,
     ReplaceTextRequest,
+)
+from app.settings import (
+    get_ollama_model,
+    get_whisper_model_size,
+    set_ollama_model,
+    set_whisper_model_size,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
@@ -68,6 +80,14 @@ class ClipboardAnalyzeRequest(BaseModel):
 
 class DependencyFixRequest(BaseModel):
     name: str
+
+
+class OllamaModelRequest(BaseModel):
+    model: str
+
+
+class WhisperModelRequest(BaseModel):
+    model: str
 
 
 def _detect_clipboard_language(text: str) -> str:
@@ -200,7 +220,7 @@ def finalize_route(payload: FinalizeRequest) -> JSONResponse:
         output = finalize(
             state,
             excluded_categories=set(payload.excluded_categories),
-            pseudonymize_person=payload.pseudonymize_person,
+            person_mode=payload.person_mode,
         )
 
         downloads: list[DownloadableFile] = []
@@ -309,6 +329,40 @@ def fix_dependency(payload: DependencyFixRequest) -> JSONResponse:
         return JSONResponse(status.model_dump())
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.get("/api/settings/ollama-model")
+def get_ollama_model_setting() -> dict:
+    return {
+        "model": get_ollama_model(),
+        "curated": CURATED_OLLAMA_MODELS,
+    }
+
+
+@app.post("/api/settings/ollama-model")
+def set_ollama_model_setting(payload: OllamaModelRequest) -> JSONResponse:
+    try:
+        model = set_ollama_model(payload.model)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    return JSONResponse({"model": model})
+
+
+@app.get("/api/settings/whisper-model")
+def get_whisper_model_setting() -> dict:
+    return {
+        "model": get_whisper_model_size(),
+        "curated": CURATED_WHISPER_MODELS,
+    }
+
+
+@app.post("/api/settings/whisper-model")
+def set_whisper_model_setting(payload: WhisperModelRequest) -> JSONResponse:
+    try:
+        size = set_whisper_model_size(payload.model)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    return JSONResponse({"model": size})
 
 
 @app.get("/api/download/{filename}")

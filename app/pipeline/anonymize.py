@@ -28,8 +28,8 @@ from app.config import (
     SPACY_MODELS,
     SUPPORTED_PHONE_REGIONS,
 )
-from app.pipeline.pseudonymize import make_person_pseudonymizer
-from app.schemas import AnonymizeResult, DetectedCategory, PiiEntity
+from app.pipeline.pseudonymize import make_person_numberer, make_person_pseudonymizer
+from app.schemas import AnonymizeResult, DetectedCategory, PersonMode, PiiEntity
 
 _analyzer: AnalyzerEngine | None = None
 _anonymizer = AnonymizerEngine()
@@ -203,18 +203,22 @@ def apply_anonymization(
     text: str,
     results: list,
     excluded_types: set[str] | None = None,
-    pseudonymize_person: bool = False,
-    person_pseudonymizer: Callable[[str], str] | None = None,
+    person_mode: PersonMode = PersonMode.REDACT,
+    person_replacer: Callable[[str], str] | None = None,
 ) -> AnonymizeResult:
     """Redact `results`, skipping any whose entity_type is in `excluded_types`
-    (left as original text) and, if `pseudonymize_person` is set, replacing
-    PERSON matches with a consistent fake name instead of "[PERSON]".
+    (left as original text). `person_mode` controls what PERSON matches become:
+    PersonMode.REDACT -> the generic "[PERSON]" (like every other category),
+    PersonMode.NUMBERED -> consistent numbered placeholders ("[PERSON1]",
+    "[PERSON2]", ...) so a reader can still tell distinct people apart without
+    seeing any name, PersonMode.PSEUDONYMIZE -> consistent fake full names.
 
-    Pass an existing `person_pseudonymizer` (from `make_person_pseudonymizer()`)
-    when this is called multiple times for the same document/export — e.g. once
-    for the markdown transcript and once per cell for a structured-format
-    re-export — so the same real name maps to the same fake name everywhere. If
-    omitted, a fresh one is created (consistent only within this single call).
+    Pass an existing `person_replacer` (from `make_person_numberer()` or
+    `make_person_pseudonymizer()`) when this is called multiple times for the
+    same document/export — e.g. once for the markdown transcript and once per
+    cell for a structured-format re-export — so the same real name maps to the
+    same label everywhere. If omitted (and person_mode isn't REDACT), a fresh
+    one is created (consistent only within this single call).
     """
     excluded_types = excluded_types or set()
     filtered = [r for r in results if r.entity_type not in excluded_types]
@@ -226,13 +230,33 @@ def apply_anonymization(
     for result in filtered:
         counts[result.entity_type] = counts.get(result.entity_type, 0) + 1
 
-    if pseudonymize_person and "PERSON" in counts and person_pseudonymizer is None:
-        person_pseudonymizer = make_person_pseudonymizer()
+    if person_mode != PersonMode.REDACT and "PERSON" in counts:
+        if person_replacer is None:
+            person_replacer = (
+                make_person_pseudonymizer()
+                if person_mode == PersonMode.PSEUDONYMIZE
+                else make_person_numberer()
+            )
+        # Presidio's AnonymizerEngine does not guarantee it invokes custom
+        # operator callbacks in left-to-right text order (observed: it
+        # processes right-to-left, to keep not-yet-replaced spans' offsets
+        # valid while replacing). Left to its own order, "[PERSON1]" could
+        # land on whichever name happens to sit last in the text instead of
+        # the first-mentioned one — undermining exactly what numbered mode
+        # is for. Both make_person_numberer() and make_person_pseudonymizer()
+        # assign on first call, so pre-seeding the closure here, sorted by
+        # true start position, fixes the assignment order regardless of
+        # whatever order Presidio calls it in below; already-assigned names
+        # (from an earlier call reusing the same person_replacer) are a
+        # no-op here since the closures never reassign an existing key.
+        for result in sorted(filtered, key=lambda r: r.start):
+            if result.entity_type == "PERSON":
+                person_replacer(text[result.start : result.end])
 
     operators: dict[str, OperatorConfig] = {}
     for entity_type in counts:
-        if entity_type == "PERSON" and pseudonymize_person and person_pseudonymizer is not None:
-            operators[entity_type] = OperatorConfig("custom", {"lambda": person_pseudonymizer})
+        if entity_type == "PERSON" and person_mode != PersonMode.REDACT and person_replacer is not None:
+            operators[entity_type] = OperatorConfig("custom", {"lambda": person_replacer})
         else:
             operators[entity_type] = OperatorConfig("replace", {"new_value": f"[{entity_type}]"})
 

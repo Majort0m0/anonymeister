@@ -109,6 +109,24 @@
       </button>
 
       <div id="status-panel" class="status-panel hidden">
+        <div class="model-picker">
+          <label for="ollama-model-select">Ollama-Modell (Tiefencheck &amp; Zusammenfassung)</label>
+          <div class="model-picker-row">
+            <select id="ollama-model-select"></select>
+            <input type="text" id="ollama-model-custom" class="find-replace-input hidden" placeholder="z. B. llama3.1:8b">
+            <button type="button" id="ollama-model-apply" class="secondary-btn">Übernehmen</button>
+          </div>
+          <p id="ollama-model-status" class="model-picker-status"></p>
+        </div>
+        <div class="model-picker">
+          <label for="whisper-model-select">Whisper-Modellgröße (Audiotranskription)</label>
+          <div class="model-picker-row">
+            <select id="whisper-model-select"></select>
+            <input type="text" id="whisper-model-custom" class="find-replace-input hidden" placeholder="z. B. large-v3-turbo">
+            <button type="button" id="whisper-model-apply" class="secondary-btn">Übernehmen</button>
+          </div>
+          <p id="whisper-model-status" class="model-picker-status"></p>
+        </div>
         <div id="status-loading" class="status-loading">Lade Systemstatus&hellip;</div>
         <ul id="dependency-list" class="dependency-list"></ul>
       </div>
@@ -255,13 +273,16 @@
             Lässt eine erkannte Kategorie unangetastet im Ergebnistext stehen, statt sie zu schwärzen
             — z. B. wenn Ortsangaben für den Zweck des Dokuments unproblematisch sind.
           </dd>
-          <dt>Schwärzen vs. Pseudonymisieren (nur bei Namen)</dt>
+          <dt>Schwärzen vs. Nummerieren vs. Pseudonymisieren (nur bei Namen)</dt>
           <dd>
-            "Schwärzen" ersetzt jeden Namen durch den Platzhalter <code>[PERSON]</code>.
-            "Pseudonymisieren" ersetzt jeden Namen stattdessen durch einen erfundenen, aber
-            <strong>konsistenten</strong> Fantasienamen — derselbe echte Name bekommt überall im
-            Dokument (und, falls vorhanden, auch in einer zusätzlichen Tabellen-Kopie) denselben
-            Fantasienamen. Nützlich, wenn die Daten danach noch lesbar/nutzbar bleiben sollen.
+            "Schwärzen" ersetzt jeden Namen durch den generischen Platzhalter <code>[PERSON]</code> —
+            bei mehreren Personen im Dokument sind sie danach nicht mehr unterscheidbar. "Nummerieren"
+            ersetzt stattdessen durch <code>[PERSON1]</code>, <code>[PERSON2]</code>, … — unterschiedliche
+            Personen bleiben auseinanderhaltbar, ohne dass ein echter oder erfundener Name sichtbar wird.
+            "Pseudonymisieren" ersetzt jeden Namen durch einen erfundenen, aber
+            <strong>konsistenten</strong> Fantasienamen. Bei Nummerieren wie Pseudonymisieren gilt:
+            derselbe echte Name bekommt überall im Dokument (und, falls vorhanden, auch in einer
+            zusätzlichen Tabellen-Kopie) dasselbe Label.
           </dd>
           <dt>Anonymisierungs-Protokoll</dt>
           <dd>
@@ -305,21 +326,24 @@
           <dd>
             Wird für den Tiefencheck und die Zusammenfassung gebraucht. Falls nicht installiert:
             <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">ollama.com/download</a>,
-            danach das konfigurierte Modell laden (z. B. <code>ollama pull gemma4:12b</code>).
+            danach das gewählte Modell laden (z. B. <code>ollama pull gemma4:12b</code>). Welches Modell
+            verwendet wird, lässt sich unten im Systemstatus per Dropdown umstellen — kleinere Modelle
+            brauchen weniger RAM/VRAM, größere liefern bessere Ergebnisse.
           </dd>
           <dt>faster-whisper (Spracherkennung)</dt>
           <dd>
             Wird nur für Audio-Dateien gebraucht und lädt das gewählte Modell beim ersten Gebrauch
-            automatisch herunter — danach läuft es offline. Voraussetzung ist <code>ffmpeg</code> auf
-            dem System (macOS: <code>brew install ffmpeg</code>).
+            automatisch herunter — danach läuft es offline. Kein System-<code>ffmpeg</code> nötig, das
+            ist bereits enthalten. Die Modellgröße lässt sich unten im Systemstatus per Dropdown
+            umstellen — kleinere Größen brauchen weniger RAM, größere liefern bessere Ergebnisse.
           </dd>
           <dt>spaCy-Sprachmodelle</dt>
           <dd>Werden für die Grunderkennung (Namen, Orte, …) gebraucht, einmalig zu installieren.</dd>
         </dl>
         <p>
           Der Bereich <strong>„Systemstatus“</strong> unten in der App zeigt an, was davon fehlt, und
-          kann fehlende Modelle direkt nachladen. Nur bereits installierte Systemprogramme
-          (Ollama, ffmpeg) müssen manuell eingerichtet werden.
+          kann fehlende Modelle direkt nachladen. Nur eine bereits vorausgesetzte Ollama-Installation
+          muss manuell eingerichtet werden.
         </p>
       </section>
 

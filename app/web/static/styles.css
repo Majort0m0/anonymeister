@@ -649,12 +649,12 @@ body {
 }
 
 .segmented--compact {
-  max-width: 320px;
+  max-width: 420px;
   font-size: 0.85rem;
 }
 
 .segmented--compact .segmented-option {
-  padding: 0.4rem 0.5rem;
+  padding: 0.4rem 0.4rem;
 }
 
 .review-actions {
@@ -880,6 +880,60 @@ body {
   font-size: 0.9rem;
 }
 
+.model-picker {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-picker label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.model-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.model-picker-row select {
+  flex: 1 1 220px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.model-picker-row .find-replace-input {
+  flex: 1 1 220px;
+}
+
+.model-picker-row .secondary-btn {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.model-picker-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.model-picker-status.success {
+  color: var(--success);
+}
+
+.model-picker-status.error {
+  color: var(--danger);
+}
+
 .dependency-list {
   list-style: none;
   margin: 0;
@@ -926,6 +980,18 @@ body {
   color: var(--text-muted);
   font-size: 0.85rem;
   margin-top: 0.1rem;
+}
+
+.dependency-hint {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-top: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--border);
+  border-radius: 4px;
+  display: inline-block;
+  word-break: break-word;
 }
 
 .dependency-fix-btn {

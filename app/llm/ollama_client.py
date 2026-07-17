@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import ollama
 
-from app.config import OLLAMA_HOST, OLLAMA_MODEL
+from app.config import OLLAMA_HOST
+from app.settings import get_ollama_model
 
 
 def generate(prompt: str, system: str | None = None) -> str:
@@ -19,14 +20,15 @@ def generate(prompt: str, system: str | None = None) -> str:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    model = get_ollama_model()
     try:
         client = ollama.Client(host=OLLAMA_HOST)
-        response = client.chat(model=OLLAMA_MODEL, messages=messages)
+        response = client.chat(model=model, messages=messages)
     except Exception as exc:
         raise RuntimeError(
-            f"Could not reach the local Ollama model '{OLLAMA_MODEL}' at {OLLAMA_HOST}. "
+            f"Could not reach the local Ollama model '{model}' at {OLLAMA_HOST}. "
             "Make sure the Ollama app/daemon is running and that the model has been "
-            f'pulled (e.g. "ollama pull {OLLAMA_MODEL}").'
+            f'pulled (e.g. "ollama pull {model}").'
         ) from exc
 
     message = response["message"] if isinstance(response, dict) else response.message
