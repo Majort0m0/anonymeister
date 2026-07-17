@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anonymizer</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="app-header">
+    <div class="app-header-top">
+      <h1>Anonymizer</h1>
+      <button type="button" id="help-btn" class="secondary-btn help-btn">Anleitung &amp; Datenschutz</button>
+    </div>
+    <p class="subtitle">Dokumente &amp; Audio anonymisieren, zusammenfassen und als Markdown exportieren &mdash; vollständig lokal.</p>
+  </header>
+
+  <main class="layout">
+
+    <section id="input-card" class="card" aria-labelledby="input-heading">
+      <h2 id="input-heading">1. Eingabe</h2>
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-describedby="dropzone-hint">
+        <div class="dropzone-icon" aria-hidden="true">&#8615;</div>
+        <p class="dropzone-text">Datei hierher ziehen oder klicken, um sie auszuwählen</p>
+        <p id="dropzone-hint" class="dropzone-hint">.txt, .md, .docx, .pdf, .xlsx, .csv, .json, .odt/.ods/.odp, .mp3, .wav, .m4a &hellip;</p>
+        <input type="file" id="file-input" class="visually-hidden" tabindex="-1"
+               accept=".txt,.md,.docx,.doc,.pdf,.xlsx,.xlsm,.xls,.csv,.json,.odt,.ods,.odp,.mp3,.wav,.m4a,.ogg,.flac,.aac,.wma,.opus,.aiff,.aif,.caf,.webm">
+      </div>
+
+      <div id="file-chosen" class="file-chosen hidden">
+        <span class="file-chosen-label">Ausgewählt:</span>
+        <span id="file-chosen-name" class="file-chosen-name"></span>
+        <button type="button" id="file-clear-btn" class="link-btn">Entfernen</button>
+      </div>
+
+      <div class="divider"><span>oder</span></div>
+
+      <button type="button" id="clipboard-btn" class="secondary-btn">
+        Aus Zwischenablage einfügen
+      </button>
+
+      <div id="clipboard-preview-wrap" class="clipboard-preview-wrap hidden">
+        <label for="clipboard-preview">Eingefügter Text (bearbeitbar)</label>
+        <textarea id="clipboard-preview" class="clipboard-preview" rows="8"></textarea>
+        <button type="button" id="clipboard-clear-btn" class="link-btn">Verwerfen</button>
+      </div>
+    </section>
+
+    <section id="options-card" class="card" aria-labelledby="options-heading">
+      <h2 id="options-heading">2. Optionen</h2>
+
+      <div class="option-row">
+        <label class="toggle">
+          <input type="checkbox" id="deep-check-toggle" checked>
+          <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">
+            Tiefencheck (LLM-Prüfung)
+            <span class="toggle-desc">Zusätzliche, langsamere Verifizierung der Anonymisierung durch ein lokales Sprachmodell.</span>
+          </span>
+        </label>
+      </div>
+
+      <fieldset class="option-row">
+        <legend>Ausgabe</legend>
+        <div class="segmented" role="radiogroup" aria-label="Ausgabe">
+          <label class="segmented-option">
+            <input type="radio" name="output-mode" value="transcript">
+            <span>Transkript</span>
+          </label>
+          <label class="segmented-option">
+            <input type="radio" name="output-mode" value="summary">
+            <span>Zusammenfassung</span>
+          </label>
+          <label class="segmented-option">
+            <input type="radio" name="output-mode" value="both" checked>
+            <span>Beides</span>
+          </label>
+        </div>
+      </fieldset>
+    </section>
+
+    <section id="action-card" class="card action-card">
+      <h2 class="visually-hidden">3. Analysieren</h2>
+      <button type="button" id="analyze-btn" class="primary-btn" disabled>Analysieren</button>
+      <p id="analyze-hint" class="hint">Bitte zuerst eine Datei auswählen oder Text aus der Zwischenablage einfügen.</p>
+
+      <div id="loading" class="loading hidden">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Analyse läuft (kann bei großen Dateien oder mit Tiefencheck mehrere Minuten dauern)&hellip;</p>
+      </div>
+
+      <div id="error-box" class="error-box hidden" role="alert">
+        <strong>Fehler:</strong>
+        <span id="error-text"></span>
+      </div>
+    </section>
+
+    <section id="review-card" class="card hidden" aria-labelledby="review-heading">
+      <h2 id="review-heading">4. Kategorien prüfen</h2>
+
+      <div class="result-meta">
+        <span id="review-filename"></span>
+        <span id="review-language" class="badge"></span>
+      </div>
+
+      <p id="review-empty" class="hint hidden">Es wurden keine personenbezogenen Daten erkannt.</p>
+
+      <ul id="review-list" class="review-list"></ul>
+
+      <div class="review-actions">
+        <button type="button" id="finalize-btn" class="primary-btn">Anonymisierung anwenden</button>
+        <button type="button" id="review-restart-btn" class="link-btn">Neu starten</button>
+      </div>
+
+      <div id="finalize-loading" class="loading hidden">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Anonymisierung wird angewendet (kann bei Tiefencheck oder Zusammenfassung etwas dauern)&hellip;</p>
+      </div>
+    </section>
+
+    <section id="result-card" class="card hidden" aria-labelledby="result-heading">
+      <div class="result-heading-row">
+        <h2 id="result-heading">Ergebnis</h2>
+        <button type="button" id="result-new-document-btn" class="secondary-btn">Neues Dokument</button>
+      </div>
+
+      <div id="pii-audit" class="pii-audit hidden">
+        <h3>Erkannte PII-Kategorien</h3>
+        <ul id="pii-audit-list" class="pii-audit-list"></ul>
+      </div>
+
+      <div class="result-meta">
+        <span id="result-filename"></span>
+        <span id="result-language" class="badge"></span>
+      </div>
+
+      <div id="result-transcript-wrap" class="result-preview-wrap hidden">
+        <h3>Transkript</h3>
+        <pre id="result-transcript" class="result-markdown"></pre>
+      </div>
+
+      <div id="result-summary-wrap" class="result-preview-wrap hidden">
+        <h3>Zusammenfassung</h3>
+        <pre id="result-summary" class="result-markdown"></pre>
+      </div>
+
+      <div id="result-downloads" class="result-downloads"></div>
+    </section>
+
+    <section class="card status-card">
+      <button type="button" id="status-toggle" class="status-toggle" aria-expanded="false" aria-controls="status-panel">
+        <span>Systemstatus</span>
+        <span id="status-toggle-icon" class="status-toggle-icon" aria-hidden="true">&#9656;</span>
+      </button>
+
+      <div id="status-panel" class="status-panel hidden">
+        <div id="status-loading" class="status-loading">Lade Systemstatus&hellip;</div>
+        <ul id="dependency-list" class="dependency-list"></ul>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <p>Alle Daten werden ausschließlich lokal verarbeitet.</p>
+    <p class="license-note">
+      CC BY-NC
+      <a href="https://lernsachen.blog" target="_blank" rel="noopener noreferrer">Lernsachen.blog</a>
+    </p>
+  </footer>
+
+</div>
+
+<div id="help-modal" class="modal-overlay hidden">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-modal-heading">
+    <div class="modal-header">
+      <h2 id="help-modal-heading">Anleitung &amp; Datenschutz</h2>
+      <button type="button" id="help-modal-close" class="modal-close" aria-label="Schließen">&times;</button>
+    </div>
+
+    <div class="modal-body">
+
+      <section class="help-section">
+        <h3>So funktioniert der Ablauf</h3>
+        <ol>
+          <li><strong>Eingabe:</strong> Datei auswählen/hineinziehen oder Text aus der Zwischenablage einfügen.</li>
+          <li><strong>Analysieren:</strong> Die App durchsucht den Inhalt nach personenbezogenen Daten (PII) — es wird dabei noch <em>nichts</em> verändert oder gespeichert.</li>
+          <li><strong>Kategorien prüfen:</strong> Alle gefundenen Kategorien (z. B. Namen, E-Mail-Adressen, Orte) werden mit Beispielen angezeigt. Jede Kategorie kann einzeln abgewählt werden, um sie im Ergebnis sichtbar zu lassen.</li>
+          <li><strong>Anonymisierung anwenden:</strong> Erst jetzt wird der finale, anonymisierte Text erzeugt und als Datei gespeichert.</li>
+        </ol>
+      </section>
+
+      <section class="help-section">
+        <h3>Optionen im Detail</h3>
+        <dl>
+          <dt>Tiefencheck (LLM-Prüfung)</dt>
+          <dd>
+            Ein zusätzlicher, langsamerer Durchlauf durch ein lokales Sprachmodell, <em>nachdem</em>
+            die automatische Erkennung bereits alle offensichtlichen Daten geschwärzt hat. Er findet
+            Dinge, die eine reine Muster-/Namenserkennung strukturell nicht erkennen kann: Spitznamen
+            ("Krümel"), Rollenbezeichnungen ("der Teamleiter"), Projekt- oder Decknamen. Er ist kein
+            Ersatz für die automatische Erkennung, sondern eine zweite, gezielt andere Prüfung obendrauf.
+          </dd>
+          <dt>Ausgabe: Transkript / Zusammenfassung / Beides</dt>
+          <dd>
+            Legt fest, was am Ende erzeugt wird. Das Transkript ist der vollständige anonymisierte
+            Text, die Zusammenfassung eine kurze KI-generierte Übersicht davon. Beide werden als
+            <strong>getrennte</strong> Markdown-Dateien gespeichert.
+          </dd>
+          <dt>Kategorie abwählen</dt>
+          <dd>
+            Lässt eine erkannte Kategorie unangetastet im Ergebnistext stehen, statt sie zu schwärzen
+            — z. B. wenn Ortsangaben für den Zweck des Dokuments unproblematisch sind.
+          </dd>
+          <dt>Schwärzen vs. Pseudonymisieren (nur bei Namen)</dt>
+          <dd>
+            "Schwärzen" ersetzt jeden Namen durch den Platzhalter <code>[PERSON]</code>.
+            "Pseudonymisieren" ersetzt jeden Namen stattdessen durch einen erfundenen, aber
+            <strong>konsistenten</strong> Fantasienamen — derselbe echte Name bekommt überall im
+            Dokument (und, falls vorhanden, auch in einer zusätzlichen Tabellen-Kopie) denselben
+            Fantasienamen. Nützlich, wenn die Daten danach noch lesbar/nutzbar bleiben sollen.
+          </dd>
+          <dt>Anonymisierungs-Protokoll</dt>
+          <dd>
+            Die Tabelle am Ende jeder Ausgabedatei listet auf, welche Kategorien wie oft erkannt und
+            ersetzt wurden — damit das Ergebnis nachvollziehbar bleibt, statt "unsichtbar" verändert
+            zu werden.
+          </dd>
+        </dl>
+      </section>
+
+      <section class="help-section">
+        <h3>Unterstützte Formate &amp; Downloads</h3>
+        <p>
+          Text/Dokumente (<code>.txt</code>, <code>.md</code>, <code>.docx</code>, <code>.pdf</code>),
+          Tabellen (<code>.xlsx</code>/<code>.xls</code>, <code>.csv</code>, <code>.json</code>,
+          <code>.ods</code>), OpenDocument-Text (<code>.odt</code>, <code>.odp</code>), Audio
+          (<code>.mp3</code>, <code>.wav</code>, <code>.m4a</code> u.&nbsp;a.) und Text aus der
+          Zwischenablage.
+        </p>
+        <p>
+          Bei Tabellenformaten (Excel/CSV/JSON/ODS) entsteht zusätzlich zum Markdown-Transkript eine
+          anonymisierte Kopie im <strong>Originalformat</strong> — also eine echte, weiter nutzbare
+          Tabelle mit denselben Spalten wie das Original, nur mit anonymisierten Werten.
+        </p>
+      </section>
+
+      <section class="help-section">
+        <h3>Lokale KI-Komponenten &amp; Installation</h3>
+        <p>Die App nutzt zwei Arten lokaler KI-Modelle, beide laufen vollständig auf diesem Rechner:</p>
+        <dl>
+          <dt>Ollama (Sprachmodell)</dt>
+          <dd>
+            Wird für den Tiefencheck und die Zusammenfassung gebraucht. Falls nicht installiert:
+            <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">ollama.com/download</a>,
+            danach das konfigurierte Modell laden (z. B. <code>ollama pull gemma4:12b</code>).
+          </dd>
+          <dt>faster-whisper (Spracherkennung)</dt>
+          <dd>
+            Wird nur für Audio-Dateien gebraucht und lädt das gewählte Modell beim ersten Gebrauch
+            automatisch herunter — danach läuft es offline. Voraussetzung ist <code>ffmpeg</code> auf
+            dem System (macOS: <code>brew install ffmpeg</code>).
+          </dd>
+          <dt>spaCy-Sprachmodelle</dt>
+          <dd>Werden für die Grunderkennung (Namen, Orte, …) gebraucht, einmalig zu installieren.</dd>
+        </dl>
+        <p>
+          Der Bereich <strong>„Systemstatus“</strong> unten in der App zeigt an, was davon fehlt, und
+          kann fehlende Modelle direkt nachladen. Nur bereits installierte Systemprogramme
+          (Ollama, ffmpeg) müssen manuell eingerichtet werden.
+        </p>
+      </section>
+
+      <section class="help-section">
+        <h3>Datenschutz: was passiert mit den Daten?</h3>
+        <ul class="help-privacy-list">
+          <li><strong>Alles läuft lokal.</strong> Es gibt keine Cloud-Anbindung und keinen externen API-Aufruf — weder für die Dokumentenanalyse noch für die KI-Auswertung.</li>
+          <li><strong>Rohdaten verlassen nie diesen Rechner.</strong> Hochgeladene Dateien werden nur temporär auf der Festplatte zwischengespeichert und nach der Analyse sofort gelöscht.</li>
+          <li><strong>Das Sprachmodell (Ollama) sieht nur bereits anonymisierten Text.</strong> Der Tiefencheck und die Zusammenfassung laufen ausschließlich über bereits geschwärzten Text — nie über das Originaldokument.</li>
+          <li><strong>Ergebnisdateien liegen lokal.</strong> Anonymisierte Dokumente werden in einem lokalen Ordner dieser App gespeichert und stehen nur auf diesem Rechner zur Verfügung.</li>
+          <li><strong>Keine Analyse, kein Tracking.</strong> Diese App sammelt keine Nutzungsdaten und sendet nichts an Dritte.</li>
+        </ul>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+# Builds native installers for macOS/Windows/Linux plus the Docker image, on
+# their respective native runners — this is the actual verification these
+# platform builds need (PyInstaller can't cross-compile; a build only proves
+# itself on the OS it runs on). Triggers on tags (release) and manually.
+#
+# The macOS build mirrors scripts/build_macos.sh, which HAS been run and
+# tested locally. The Windows/Linux jobs mirror scripts/build_windows.ps1 and
+# scripts/build_linux.sh, which have not — this workflow, once it runs here,
+# is what actually proves (or disproves) them.
+
+name: Build installers
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+          python -m spacy download de_core_news_lg
+          python -m spacy download en_core_web_lg
+      - name: Build .app + .dmg
+        run: |
+          chmod +x scripts/build_macos.sh
+          ./scripts/build_macos.sh
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anonymizer-macos
+          path: dist/Anonymizer-macOS.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+          python -m spacy download de_core_news_lg
+          python -m spacy download en_core_web_lg
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+      - name: Build installer
+        run: .\scripts\build_windows.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anonymizer-windows
+          path: dist/Anonymizer-Setup.exe
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3-gi gir1.2-webkit2-4.1 fuse libfuse2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+          python -m spacy download de_core_news_lg
+          python -m spacy download en_core_web_lg
+      - name: Build AppImage
+        run: |
+          chmod +x scripts/build_linux.sh
+          ./scripts/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anonymizer-linux
+          path: dist/Anonymizer-x86_64.AppImage
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t anonymizer:latest .
+      - name: Smoke test
+        run: |
+          docker run -d --name anonymizer-ci -p 8765:8765 anonymizer:latest
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8765/ > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8765/ > /dev/null
+          docker logs anonymizer-ci
+          docker stop anonymizer-ci

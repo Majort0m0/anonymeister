@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./output:/app/output
+    environment:
+      # host.docker.internal resolves to the host machine on Docker Desktop
+      # (Mac/Windows) automatically; extra_hosts below makes it resolve the
+      # same way on native Linux Docker (needs Docker 20.10+). Point this at
+      # a different host/port if Ollama runs elsewhere (e.g. the "ollama"
+      # service below, or a remote machine on your network).
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL=gemma4:12b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Uncomment to run Ollama itself in a container instead of using one already
+  # running on the host — then also change OLLAMA_HOST above to
+  # "http://ollama:11434" and add "depends_on: [ollama]" under app.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+
+# volumes:
+#   ollama-models:

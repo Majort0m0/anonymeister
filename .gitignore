@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+output/*
+!output/.gitkeep
+.DS_Store
+.claude/
+
+# PyInstaller / packaging build output (regenerate with scripts/build_*)
+build/
+dist/
+*.spec.bak
+
