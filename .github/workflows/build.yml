@@ -7,6 +7,13 @@
 # tested locally. The Windows/Linux jobs mirror scripts/build_windows.ps1 and
 # scripts/build_linux.sh, which have not — this workflow, once it runs here,
 # is what actually proves (or disproves) them.
+#
+# On a tag push, the `release` job publishes a GitHub Release for that tag
+# and attaches the three installers as release assets — this is the actual
+# distribution mechanism (unlike upload-artifact, these don't expire and
+# don't bloat the git repo with multi-hundred-MB binaries). A manual
+# workflow_dispatch run has no tag, so it only builds/verifies without
+# publishing a release.
 
 name: Build installers
 
@@ -105,3 +112,21 @@ jobs:
           curl -sf http://127.0.0.1:8765/ > /dev/null
           docker logs anonymizer-ci
           docker stop anonymizer-ci
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/anonymizer-macos/*
+            artifacts/anonymizer-windows/*
+            artifacts/anonymizer-linux/*

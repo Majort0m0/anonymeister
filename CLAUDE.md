@@ -368,6 +368,21 @@ them — pushing this repo to GitHub and letting that workflow run is the
 recommended next step before trusting those two scripts, rather than treating
 them as equivalent in confidence to the macOS build or the Docker setup.
 
+**Distributing installers goes through GitHub Releases, not the git repo
+itself.** The three installers (`.dmg`, `.exe`, `.AppImage`) are each
+several hundred MB to ~1 GB — well past GitHub's 100 MB per-file push limit,
+and not something that belongs in git history even if it weren't. Pushing a
+tag matching `v*` runs `.github/workflows/build.yml`'s `macos`/`windows`/
+`linux` jobs as before (each `upload-artifact`s its installer, which is
+still useful for inspecting a specific run), and now also a `release` job
+(gated on `startsWith(github.ref, 'refs/tags/v')`, so a plain
+`workflow_dispatch` run — no tag — builds/verifies without publishing)
+that downloads all three via `actions/download-artifact` and publishes them
+as assets on a GitHub Release for that tag via `softprops/action-gh-release`.
+That action needs `permissions: contents: write` on the job (set explicitly
+here since some repos default `GITHUB_TOKEN` to read-only) — no other setup
+or secrets required, it uses the run's own `GITHUB_TOKEN`.
+
 ## Known limitations (see README.md for the user-facing version)
 
 PII detection is inherently probabilistic — the audit table in every output is
