@@ -17,7 +17,9 @@
     <p class="subtitle">Dokumente &amp; Audio anonymisieren, zusammenfassen und als Markdown exportieren &mdash; vollständig lokal.</p>
   </header>
 
-  <main class="layout">
+  <main class="app-layout">
+
+   <div class="sidebar">
 
     <section id="input-card" class="card" aria-labelledby="input-heading">
       <h2 id="input-heading">1. Eingabe</h2>
@@ -54,7 +56,7 @@
 
       <div class="option-row">
         <label class="toggle">
-          <input type="checkbox" id="deep-check-toggle" checked>
+          <input type="checkbox" id="deep-check-toggle">
           <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
           <span class="toggle-label">
             Tiefencheck (LLM-Prüfung)
@@ -98,6 +100,26 @@
       </div>
     </section>
 
+    <section class="card status-card">
+      <button type="button" id="status-toggle" class="status-toggle" aria-expanded="false" aria-controls="status-panel">
+        <span>Systemstatus</span>
+        <span id="status-toggle-icon" class="status-toggle-icon" aria-hidden="true">&#9656;</span>
+      </button>
+
+      <div id="status-panel" class="status-panel hidden">
+        <div id="status-loading" class="status-loading">Lade Systemstatus&hellip;</div>
+        <ul id="dependency-list" class="dependency-list"></ul>
+      </div>
+    </section>
+
+   </div>
+
+   <div class="main-content">
+
+    <div id="empty-state" class="card empty-state">
+      <p>Ergebnisse erscheinen hier, sobald eine Datei oder Text aus der Zwischenablage analysiert wurde.</p>
+    </div>
+
     <section id="review-card" class="card hidden" aria-labelledby="review-heading">
       <h2 id="review-heading">4. Kategorien prüfen</h2>
 
@@ -137,30 +159,22 @@
         <span id="result-language" class="badge"></span>
       </div>
 
-      <div id="result-transcript-wrap" class="result-preview-wrap hidden">
-        <h3>Transkript</h3>
-        <pre id="result-transcript" class="result-markdown"></pre>
-      </div>
+      <div class="result-previews">
+        <div id="result-transcript-wrap" class="result-preview-wrap hidden">
+          <h3>Transkript</h3>
+          <pre id="result-transcript" class="result-markdown"></pre>
+        </div>
 
-      <div id="result-summary-wrap" class="result-preview-wrap hidden">
-        <h3>Zusammenfassung</h3>
-        <pre id="result-summary" class="result-markdown"></pre>
+        <div id="result-summary-wrap" class="result-preview-wrap hidden">
+          <h3>Zusammenfassung</h3>
+          <pre id="result-summary" class="result-markdown"></pre>
+        </div>
       </div>
 
       <div id="result-downloads" class="result-downloads"></div>
     </section>
 
-    <section class="card status-card">
-      <button type="button" id="status-toggle" class="status-toggle" aria-expanded="false" aria-controls="status-panel">
-        <span>Systemstatus</span>
-        <span id="status-toggle-icon" class="status-toggle-icon" aria-hidden="true">&#9656;</span>
-      </button>
-
-      <div id="status-panel" class="status-panel hidden">
-        <div id="status-loading" class="status-loading">Lade Systemstatus&hellip;</div>
-        <ul id="dependency-list" class="dependency-list"></ul>
-      </div>
-    </section>
+   </div>
 
   </main>
 

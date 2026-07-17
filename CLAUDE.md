@@ -221,17 +221,35 @@ footer's license link and the help modal's Ollama-download link rely on this;
 don't add `target="_blank"` links assuming they'd otherwise hijack the app
 window, but also don't add special-case handling for them, it already works.
 
-**Result-card phase transitions must not reflow content above the result
-card.** `app/web/static/app.js`'s `renderResult()` ends with
-`resultCard.scrollIntoView(...)`. The finalize handler used to also call
-`showInputPhase()` right after — which unhides `inputCard`/`optionsCard`/
-`actionCard`, all positioned *above* `resultCard` in the DOM — and the layout
-reflow that follows silently undoes the just-completed scroll, so the result
-appeared to "jump to the top" (this was reported as a bug and is why the call
-was removed). The result card now has its own explicit `resultNewDocumentBtn`
-→ `resetToInputPhase()` control instead of auto-returning to phase 1. Keep
-this in mind for any future change that shows/hides sections above the result
-card during/after `renderResult()`.
+**Two-column desktop layout: a persistent sidebar + a main content column.**
+`app/web/static/index.html`'s `<main class="app-layout">` splits into
+`.sidebar` (input, options, action/analyze button, system status — always
+visible, never hidden/shown as a "phase") and `.main-content` (the empty
+state, category review, and result — only one of which is ever unhidden at a
+time). This replaced an earlier single-column, phase-toggling layout where
+`showInputPhase()`/`hideInputPhase()` hid the input cards while reviewing/
+viewing results; that design is gone entirely now; don't reintroduce it. Two
+consequences worth knowing before touching this area:
+- Because the sidebar never hides/shows, picking a new file or pasting new
+  clipboard text while a review/result is displayed and clicking
+  "Analysieren" again just works — no need to explicitly reset first
+  (`resetToInputPhase()`/the "Neues Dokument" button are conveniences, not
+  the only way back to a blank state).
+- `renderResult()` ends with `resultCard.scrollIntoView(...)`. A now-fixed
+  bug: the finalize handler used to also unhide the (then-hidden) input
+  cards right after, which — since they sat *above* the result card in a
+  single-column DOM — reflowed the page and silently undid the just-completed
+  scroll, making the result appear to "jump to the top". With the sidebar
+  now a separate grid column that's never toggled, this specific failure
+  mode can't recur, but the general lesson stands: don't show/hide content
+  positioned above an element right after scrolling to it.
+- `.result-previews` shows the transcript and summary side by side (flexbox,
+  wraps to stacked below ~320px each) and `.review-list` is a responsive grid
+  (`auto-fill, minmax(300px, 1fr)`) — both exist specifically to make use of
+  the wider main-content column; don't reflatten them back to a single
+  stacked list without a reason, that's the whole point of this layout.
+- The grid collapses to a single stacked column below `880px` (see the
+  `@media` query on `.app-layout`) for narrow windows.
 
 ## Packaging (native installers + Docker)
 

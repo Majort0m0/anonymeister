@@ -34,10 +34,6 @@ const CATEGORY_LABELS = {
 
 // --- Phase 1: input ---------------------------------------------------------
 
-const inputCard = document.getElementById("input-card");
-const optionsCard = document.getElementById("options-card");
-const actionCard = document.getElementById("action-card");
-
 const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("file-input");
 const fileChosen = document.getElementById("file-chosen");
@@ -60,7 +56,9 @@ const loadingBox = document.getElementById("loading");
 const errorBox = document.getElementById("error-box");
 const errorText = document.getElementById("error-text");
 
-// --- Phase 2: category review ----------------------------------------------
+// --- Main content column (empty state / category review / result) ---------
+
+const emptyState = document.getElementById("empty-state");
 
 const reviewCard = document.getElementById("review-card");
 const reviewFilename = document.getElementById("review-filename");
@@ -162,22 +160,23 @@ function hideError() {
 }
 
 // --- Phase switching ---------------------------------------------------------
+//
+// The sidebar (input/options/action/status) is always visible — it's a
+// persistent control panel, not a "phase" that gets hidden. Only the main
+// content column switches between the empty state, category review, and
+// the result.
 
-function showInputPhase() {
-  inputCard.classList.remove("hidden");
-  optionsCard.classList.remove("hidden");
-  actionCard.classList.remove("hidden");
+function showEmptyState() {
+  emptyState.classList.remove("hidden");
 }
 
-function hideInputPhase() {
-  inputCard.classList.add("hidden");
-  optionsCard.classList.add("hidden");
-  actionCard.classList.add("hidden");
+function hideEmptyState() {
+  emptyState.classList.add("hidden");
 }
 
-// Full reset back to a blank phase 1: discards any pending (unfinalized)
-// token client-side (the server-side entry just becomes unused until app
-// restart, which is fine) and clears both input methods.
+// Full reset back to the empty main-content state: discards any pending
+// (unfinalized) token client-side (the server-side entry just becomes
+// unused until app restart, which is fine) and clears both input methods.
 function resetToInputPhase() {
   currentToken = null;
   currentCategories = [];
@@ -187,7 +186,7 @@ function resetToInputPhase() {
   clearSelectedFile();
   clearClipboardText();
   hideError();
-  showInputPhase();
+  showEmptyState();
 }
 
 // --- Dropzone -------------------------------------------------------------
@@ -325,6 +324,7 @@ analyzeBtn.addEventListener("click", async () => {
   if (analyzeBtn.disabled) return;
 
   hideError();
+  hideEmptyState();
   reviewCard.classList.add("hidden");
   resultCard.classList.add("hidden");
   loadingBox.classList.remove("hidden");
@@ -488,7 +488,7 @@ function renderCategories(pending) {
     }
   }
 
-  hideInputPhase();
+  hideEmptyState();
   resultCard.classList.add("hidden");
   reviewCard.classList.remove("hidden");
   reviewCard.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -550,11 +550,6 @@ finalizeBtn.addEventListener("click", async () => {
     currentToken = null;
     currentCategories = [];
     reviewCard.classList.add("hidden");
-    // Deliberately NOT calling showInputPhase() here: unhiding the input
-    // cards (which sit above the result card in the DOM) would reflow the
-    // page and undo the scrollIntoView() renderResult() just did, making the
-    // result look like it "scrolled back to the top". The explicit "Neues
-    // Dokument" button is the only way back to phase 1 from here.
     renderResult(data);
   } catch (err) {
     showError(
