@@ -179,3 +179,10 @@ formatiges Duplikat.
 - **Legacy `.xls`** kann nicht im Originalformat zurückgeschrieben werden
   (kein verlässlicher moderner Writer dafür) — die anonymisierte Kopie wird
   stattdessen als `.xlsx` gespeichert.
+- **Es gibt noch keine automatisierte Test-Suite.** Verifikation während der
+  Entwicklung erfolgte bisher manuell (Pipeline-Funktionen direkt aufgerufen,
+  laufenden FastAPI-Server per curl getestet).
+
+## Lizenz
+
+MIT — siehe [`LICENSE`](LICENSE).
