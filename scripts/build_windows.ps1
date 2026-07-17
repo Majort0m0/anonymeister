@@ -1,8 +1,9 @@
 # Build Anonymizer.exe + a Windows installer (via Inno Setup).
 #
 # Run from the repo root in PowerShell: .\scripts\build_windows.ps1
-# Requires: the project venv set up per README.md, plus
-#   uv pip install -r requirements-build.txt
+# Requires PyInstaller on the active Python (a project .venv set up per
+# README.md, with requirements-build.txt installed, or — as in CI — deps
+# already installed on whatever Python is on PATH with no venv at all).
 # For the installer step: Inno Setup (https://jrsoftware.org/isinfo.php),
 # with its compiler (ISCC.exe) on PATH — if it's missing, this script still
 # produces the raw dist\Anonymizer\ folder, just skips the installer.
@@ -17,12 +18,9 @@ $ErrorActionPreference = "Stop"
 
 Set-Location (Join-Path $PSScriptRoot "..")
 
-if (-not (Test-Path ".venv")) {
-    Write-Error "No .venv found — run the Setup steps in README.md first."
-    exit 1
+if (Test-Path ".venv") {
+    & .\.venv\Scripts\Activate.ps1
 }
-
-& .\.venv\Scripts\Activate.ps1
 
 Write-Host "==> Running PyInstaller..."
 pyinstaller --clean --noconfirm anonymizer.spec

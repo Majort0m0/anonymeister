@@ -2,18 +2,16 @@
 # Build Anonymizer.app + a distributable .dmg for macOS.
 #
 # Run from the repo root: ./scripts/build_macos.sh
-# Requires: the project venv set up per README.md (pyinstaller included —
-# `uv pip install pyinstaller` if it's missing).
+# Requires PyInstaller on the active Python (a project .venv set up per
+# README.md, with requirements-build.txt installed, or — as in CI — deps
+# already installed on whatever Python is on PATH with no venv at all).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [ ! -d .venv ]; then
-  echo "No .venv found — run the Setup steps in README.md first." >&2
-  exit 1
+if [ -d .venv ]; then
+  source .venv/bin/activate
 fi
-
-source .venv/bin/activate
 
 echo "==> Running PyInstaller..."
 pyinstaller --clean --noconfirm anonymizer.spec

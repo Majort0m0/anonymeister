@@ -2,8 +2,9 @@
 # Build an AppImage for Anonymizer on Linux.
 #
 # Run from the repo root: ./scripts/build_linux.sh
-# Requires: the project venv set up per README.md, plus
-#   uv pip install -r requirements-build.txt
+# Requires PyInstaller on the active Python (a project .venv set up per
+# README.md, with requirements-build.txt installed, or — as in CI — deps
+# already installed on whatever Python is on PATH with no venv at all).
 #
 # IMPORTANT Linux-specific runtime dependency, not bundled by this script:
 # pywebview needs GTK + WebKit2GTK (PyGObject bindings + their native
@@ -23,12 +24,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [ ! -d .venv ]; then
-  echo "No .venv found — run the Setup steps in README.md first." >&2
-  exit 1
+if [ -d .venv ]; then
+  source .venv/bin/activate
 fi
-
-source .venv/bin/activate
 
 echo "==> Running PyInstaller..."
 pyinstaller --clean --noconfirm anonymizer.spec
