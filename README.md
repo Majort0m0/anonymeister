@@ -104,6 +104,24 @@ venv) einmalig ausführen.
 | Windows | `.\scripts\build_windows.ps1` | `dist/Anonymizer/Anonymizer.exe`, mit installiertem [Inno Setup](https://jrsoftware.org/isinfo.php) zusätzlich `dist/Anonymizer-Setup.exe` |
 | Linux | `./scripts/build_linux.sh` | `dist/Anonymizer-x86_64.AppImage` (braucht `python3-gi` + `gir1.2-webkit2-4.1` bzw. distro-Äquivalent auf dem Zielsystem — pywebview kann diese GTK/WebKit-Systemabhängigkeit nicht selbst mitbringen) |
 
+**Linux-Nutzer:** Vor dem ersten Start der AppImage müssen GTK + WebKit2GTK
+samt PyGObject-Bindings systemweit installiert sein — das lässt sich nicht in
+die AppImage bündeln:
+
+```bash
+# Debian/Ubuntu
+sudo apt install python3-gi gir1.2-webkit2-4.1
+
+# Fedora
+sudo dnf install python3-gobject webkit2gtk4.1
+
+# Arch
+sudo pacman -S python-gobject webkit2gtk-4.1 gtk3
+```
+
+Ohne diese Pakete bricht der Start mit `ModuleNotFoundError: No module named
+'gi'` (bzw. `'qtpy'`) ab.
+
 Die macOS-Variante ist hier gebaut und getestet worden (inkl. eines
 Ad-hoc-Signaturschritts). Windows/Linux sind vom selben Grundgerüst
 abgeleitet, aber mangels verfügbarer Windows-/Linux-Umgebung nicht selbst
