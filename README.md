@@ -72,7 +72,7 @@ python -m spacy download en_core_web_lg
 
 Voraussetzungen auf dem System:
 - [Ollama](https://ollama.com/download) installiert und gestartet, Modell
-  gepullt: `ollama pull gemma4:12b` (Standardmodell — im "Systemstatus"-Bereich
+  gepullt: `ollama pull gemma4:e4b` (Standardmodell — im "Systemstatus"-Bereich
   der App direkt umstellbar, siehe unten; Fallback in `app/config.py`)
 
 (Audiotranskription braucht kein System-`ffmpeg` — `faster-whisper` dekodiert

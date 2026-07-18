@@ -12,7 +12,7 @@ services:
       # a different host/port if Ollama runs elsewhere (e.g. the "ollama"
       # service below, or a remote machine on your network).
       - OLLAMA_HOST=http://host.docker.internal:11434
-      - OLLAMA_MODEL=gemma4:12b
+      - OLLAMA_MODEL=gemma4:e4b
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

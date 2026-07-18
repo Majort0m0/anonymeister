@@ -35,20 +35,29 @@ Two independent LLM passes live here:
   apply_candidates(), which is why it takes excluded_categories itself: it
   must not re-flag something the user deliberately chose to keep visible.
 
-Both passes chunk long input before sending it to the LLM (see
+Both passes chunk very long input before sending it to the LLM (see
 _split_into_chunks()). This is NOT about context-window truncation — tested
 directly against this app's default model/config, a ~1750-word document was
-recalled perfectly. It is about recall degrading on real (non-synthetic)
-documents once a lot of already-redacted placeholder noise piles up in one
-call: a real 55-PERSON/30-LOCATION medical report reliably caught known
-misses when tested as a short, low-noise excerpt, but missed the same terms
-when checked as one long call over the full, placeholder-dense document.
-Splitting into smaller, lower-density chunks (with overlap so a candidate
-straddling a boundary still appears whole in at least one chunk) trades more
-LLM calls (slower) for better recall — each pass's results are merged by
-exact text match and occurrence counts re-derived against the full text
-afterwards, so chunk boundaries never affect correctness, only how
-thoroughly the model is asked to look.
+recalled perfectly in one call. The original motivation was recall degrading
+on real (non-synthetic) documents once a lot of already-redacted placeholder
+noise piles up in one call — a real 55-PERSON/30-LOCATION medical report
+caught known misses when tested as a short, low-noise excerpt but missed the
+same terms in one long call. However, real-world testing at the
+~2000-2500-word range this app's documents typically fall in showed chunking
+at a small chunk size added 6-9x the LLM calls (and proportional wall-clock
+time — an analyze+finalize pass going from a couple of minutes to 20-60)
+without measurably fixing the specific misses that motivated it in the first
+place (a generic institutional name and an adjacent postal code both still
+slipped through with chunking on). So the threshold/target sizes below are
+now deliberately large: an ordinary document stays a single call (matching
+pre-chunking speed), and only a genuinely long document (multi-page reports)
+gets split at all, into a small number of large pieces rather than many small
+ones — chunking is kept as a safety net for the extreme case, not the default
+path. Overlap ensures a candidate phrase straddling a chunk boundary still
+appears whole in at least one chunk; each pass's results are merged by exact
+text match and occurrence counts re-derived against the full text afterwards,
+so chunk boundaries never affect correctness, only how thoroughly the model
+is asked to look in one call.
 """
 
 from __future__ import annotations
@@ -68,15 +77,14 @@ from app.schemas import AnonymizeResult, DetectedCategory, PiiEntity
 # variable, leaving chunking (below) to address density-driven misses.
 _EXTRACTION_TEMPERATURE = 0.2
 
-# Empirically: recall was perfect on an unredacted ~1750-word synthetic test
-# but incomplete on a real, placeholder-dense document of similar length —
-# chunking targets density, not raw length, so the threshold is deliberately
-# well below where context-window truncation would ever matter (see
-# OLLAMA_NUM_CTX). Overlap ensures a candidate phrase split across a chunk
-# boundary still appears intact in at least one chunk.
-_CHUNK_TARGET_WORDS = 350
-_CHUNK_OVERLAP_WORDS = 60
-_CHUNK_THRESHOLD_WORDS = 450  # below this, a single call is not worth splitting
+# Deliberately large — see the module docstring: a smaller chunk size was
+# tried and, on real documents in this app's typical ~2000-2500-word range,
+# cost 6-9x the LLM calls without measurably improving recall. These
+# thresholds mean a typical document stays a single call; only a genuinely
+# long one (multi-page reports) gets split, into a handful of large chunks.
+_CHUNK_TARGET_WORDS = 1800
+_CHUNK_OVERLAP_WORDS = 200
+_CHUNK_THRESHOLD_WORDS = 2500  # below this, a single call is not worth splitting
 
 
 def _split_into_chunks(
@@ -188,7 +196,11 @@ _MISSED_SYSTEM_DE = (
     "Städtenamen im Fließtext, Namen konkreter Einrichtungen (z. B. Kindergarten, "
     "Schule, Klinik, Verband oder Firma — auch wenn der Name Teil eines längeren, "
     "unauffällig klingenden Ausdrucks ist), sowie Geschäfts-, Akten- oder "
-    "Referenznummern. Melde NUR Stellen, die eindeutig identifizierend sind — keine "
+    "Referenznummern. Achte besonders auf eine 4-5-stellige Postleitzahl unmittelbar "
+    "vor einem Ortsnamen (z. B. \"83022 Musterstadt\") — melde in diesem Fall "
+    "Postleitzahl UND Ortsname zusammen als eine einzige Textstelle, auch wenn der "
+    "Ortsname allein schon an anderer Stelle erkannt wurde. Melde NUR Stellen, die "
+    "eindeutig identifizierend sind — keine "
     "bereits durch Platzhalter ersetzten Stellen, keine Vermutungen.{exclusion_note} "
     "Antworte AUSSCHLIESSLICH mit einem JSON-Array von Objekten der Form "
     '{{"text": "<exakte Textstelle>", "category": "<kurze Kategorie>"}}. '
@@ -205,7 +217,10 @@ _MISSED_SYSTEM_EN = (
     "place/city names in the body text, names of specific institutions (e.g. a "
     "kindergarten, school, clinic, association, or company — even as part of a "
     "longer, unremarkable-sounding phrase), and business, file, or reference numbers. "
-    "Only report spans that are clearly identifying — not already-replaced "
+    "Pay particular attention to a 4-5 digit postal code immediately before a place "
+    "name (e.g. \"83022 Musterstadt\") — in that case report the postal code AND the "
+    "place name together as a single span, even if the place name alone was already "
+    "caught elsewhere. Only report spans that are clearly identifying — not already-replaced "
     "placeholders, and no guesses.{exclusion_note} "
     'Respond ONLY with a JSON array of objects of the form {{"text": "<exact substring>", '
     '"category": "<short category label>"}}. '

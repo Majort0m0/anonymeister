@@ -187,6 +187,13 @@ class _Job:
     result: dict | None = None
     _last_event_time: float | None = None
     created_at: float = field(default_factory=time.monotonic)
+    # Snapshotted once when the job's callbacks are built (see
+    # _make_callbacks) rather than re-read on every poll — which Ollama
+    # model is active affects how long the LLM stages actually take, so
+    # calibration for those stages is keyed per-model (see _calibration_key);
+    # caching it here avoids re-reading settings.json on every single
+    # /api/progress poll for the job's whole lifetime.
+    model: str = ""
 
 
 _jobs: dict[str, _Job] = {}
@@ -238,6 +245,29 @@ _STAGE_LABELS = {
 # the pipeline without a matching default in progress_calibration.py).
 _FALLBACK_STAGE_SECONDS = 5.0
 
+# Stages whose duration depends on which Ollama model is active — mixing
+# measurements from e.g. gemma4:e4b (fast) and gemma4:12b (much slower) into
+# one shared average made the ETA swing wildly and appear to "reset" whenever
+# a chunk finished much faster/slower than a stale, other-model-trained
+# estimate expected (observed directly: switching models between test runs).
+_MODEL_DEPENDENT_STAGES = {"deep_check_find", "deep_check_missed", "summarize"}
+
+
+def _calibration_key(stage: str, model: str) -> str:
+    if stage in _MODEL_DEPENDENT_STAGES and model:
+        return f"{stage}::{model}"
+    return stage
+
+
+def _stage_duration(durations: dict[str, float], stage: str, model: str) -> float:
+    key = _calibration_key(stage, model)
+    if key in durations:
+        return durations[key]
+    # First time this model is seen for this stage — fall back to the
+    # stage's own (model-agnostic) default rather than the generic
+    # catch-all, since it's still a much better guess than 5s for an LLM call.
+    return durations.get(stage, _FALLBACK_STAGE_SECONDS)
+
 
 def _stage_label(stage: str | None, current: int, total: int) -> str:
     if stage is None:
@@ -288,7 +318,7 @@ def _recompute_progress(job: _Job) -> None:
     done_seconds = 0.0
     reached_current = False
     for name, planned_units in job.plan:
-        per_unit = durations.get(name, _FALLBACK_STAGE_SECONDS)
+        per_unit = _stage_duration(durations, name, job.model)
         units = job.stage_total if name == job.stage else planned_units
         stage_total_seconds = per_unit * units
         total_seconds += stage_total_seconds
@@ -312,6 +342,8 @@ def _recompute_progress(job: _Job) -> None:
 
 
 def _make_callbacks(job: _Job):
+    job.model = get_ollama_model()
+
     def on_plan(plan: list[tuple[str, int]]) -> None:
         with job.lock:
             job.plan = plan
@@ -335,7 +367,7 @@ def _make_callbacks(job: _Job):
                 elapsed = now - (job._last_event_time or now)
                 units_done = current - job.stage_current
                 if units_done > 0 and elapsed > 0:
-                    record_stage_duration(stage, elapsed / units_done)
+                    record_stage_duration(_calibration_key(stage, job.model), elapsed / units_done)
                 job.stage_current = current
                 job.stage_total = total
             job._last_event_time = now

@@ -257,11 +257,14 @@ whether transcription actually worked, since it was never used for decoding).
 
 **Ollama model and Whisper size are both user-configurable at runtime, not
 just at build time** (`app/settings.py`). The desktop app ships with
-`OLLAMA_MODEL` hardcoded to `gemma4:12b` and `WHISPER_MODEL_SIZE` to `small`
-in `app/config.py` (whatever was already pulled/reasonable on the machine
-this app was built on) — poor defaults for other machines with different
-RAM/VRAM, and there was previously no way to change either short of setting
-an env var before launch, which a packaged `.app` user can't do. The
+`OLLAMA_MODEL` hardcoded to `gemma4:e4b` and `WHISPER_MODEL_SIZE` to `small`
+in `app/config.py` — there was previously no way to change either short of
+setting an env var before launch, which a packaged `.app` user can't do
+(`OLLAMA_MODEL` was originally `gemma4:12b`, whatever was already pulled on
+the machine this app was built on, before direct side-by-side testing on
+real documents showed `gemma4:e4b` several times faster with equal or
+better deep-check recall for this app's use case — the larger model wasn't
+buying back anything the size cost). The
 Systemstatus panel has two independent model pickers for this
 (`GET`/`POST /api/settings/ollama-model` and `.../whisper-model`), sharing
 one UI pattern (`app/web/static/app.js`'s `initModelPicker()` factory,

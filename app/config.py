@@ -40,8 +40,12 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 # This is the hardcoded/env-var fallback only. The Systemstatus UI lets a
 # user pick a different model at runtime (persisted via app/settings.py); an
 # explicit OLLAMA_MODEL env var (e.g. set by Docker) always wins over that
-# UI choice — see app.settings.get_ollama_model().
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:12b")
+# UI choice — see app.settings.get_ollama_model(). gemma4:e4b (also the
+# "recommended" entry in CURATED_OLLAMA_MODELS below) rather than the
+# larger 12b: direct side-by-side testing on real documents showed e4b
+# several times faster with equal or better deep-check recall — the larger
+# model wasn't buying back anything the size cost, at least for this task.
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e4b")
 
 # Ollama's /api/chat defaults to a small context window (historically 2048
 # tokens) unless a request explicitly asks for more — regardless of how much
