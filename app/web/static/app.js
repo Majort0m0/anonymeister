@@ -9,6 +9,7 @@ const ACCEPTED_EXTENSIONS = [
 const SOURCE_LABELS = {
   presidio: "Presidio",
   llm_deep_check: "LLM-Tiefencheck",
+  llm_final_check: "LLM-Nachkontrolle",
 };
 
 const LANGUAGE_LABELS = {
@@ -54,6 +55,9 @@ const segmentedOptions = document.querySelectorAll(".segmented-option");
 const analyzeBtn = document.getElementById("analyze-btn");
 const analyzeHint = document.getElementById("analyze-hint");
 const loadingBox = document.getElementById("loading");
+const loadingBarFill = document.getElementById("loading-bar-fill");
+const loadingStageLabel = document.getElementById("loading-stage-label");
+const loadingEta = document.getElementById("loading-eta");
 const errorBox = document.getElementById("error-box");
 const errorText = document.getElementById("error-text");
 
@@ -69,6 +73,9 @@ const reviewList = document.getElementById("review-list");
 const finalizeBtn = document.getElementById("finalize-btn");
 const reviewRestartBtn = document.getElementById("review-restart-btn");
 const finalizeLoading = document.getElementById("finalize-loading");
+const finalizeBarFill = document.getElementById("finalize-bar-fill");
+const finalizeStageLabel = document.getElementById("finalize-stage-label");
+const finalizeEta = document.getElementById("finalize-eta");
 
 // --- Phase 3: result ---------------------------------------------------------
 
@@ -324,6 +331,76 @@ function formatCategoryLabel(category) {
     .join(" ");
 }
 
+// --- Progress polling ---------------------------------------------------------
+//
+// analyze-file/analyze-clipboard/finalize all return {job_id} immediately —
+// the actual (potentially minutes-long, Ollama-backed) work runs server-side
+// in a background thread. pollProgress() polls GET /api/progress/{job_id}
+// until the job reports done, updating a progress bar + calibrated ETA (see
+// app/progress_calibration.py) as it goes, and returns the job's `result`
+// (shaped exactly like the old synchronous response body used to be) once
+// finished — so the caller's post-processing is otherwise unchanged.
+
+const PROGRESS_POLL_INTERVAL_MS = 700;
+
+function formatEta(seconds) {
+  if (seconds === null || seconds === undefined) return "";
+  if (seconds < 1) return "noch < 1 Sek.";
+  if (seconds < 60) return `noch ca. ${Math.round(seconds)} Sek.`;
+  return `noch ca. ${Math.round(seconds / 60)} Min.`;
+}
+
+function resetProgressUI(fillEl, labelEl, etaEl) {
+  fillEl.style.width = "0%";
+  labelEl.textContent = "Wird vorbereitet…";
+  etaEl.textContent = "";
+}
+
+// A single dropped fetch (e.g. a momentary loopback hiccup) shouldn't abort
+// a multi-minute job outright — the job keeps running server-side either
+// way, so retrying a few times is strictly better than surfacing a terminal
+// error for a transient blip. A real problem (server actually down) will
+// keep failing past this budget and still surface as an error.
+const PROGRESS_POLL_MAX_CONSECUTIVE_FAILURES = 5;
+
+async function pollProgress(jobId, { fillEl, labelEl, etaEl }) {
+  let consecutiveFailures = 0;
+  while (true) {
+    let response;
+    try {
+      response = await fetch(`/api/progress/${jobId}`);
+      consecutiveFailures = 0;
+    } catch (err) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures > PROGRESS_POLL_MAX_CONSECUTIVE_FAILURES) {
+        throw new Error("Verbindung zum lokalen Server fehlgeschlagen.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, PROGRESS_POLL_INTERVAL_MS));
+      continue;
+    }
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Fortschritt konnte nicht abgerufen werden.");
+    }
+
+    const data = await response.json();
+    fillEl.style.width = `${data.percent}%`;
+    labelEl.textContent = data.stage_label;
+    etaEl.textContent = formatEta(data.eta_seconds);
+
+    if (data.done) {
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      fillEl.style.width = "100%";
+      return data.result;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, PROGRESS_POLL_INTERVAL_MS));
+  }
+}
+
 // --- Phase 1 -> 2: analyze ---------------------------------------------------
 
 async function analyzeFile(file, outputMode, deepCheck) {
@@ -360,6 +437,7 @@ analyzeBtn.addEventListener("click", async () => {
   reviewCard.classList.add("hidden");
   resultCard.classList.add("hidden");
   loadingBox.classList.remove("hidden");
+  resetProgressUI(loadingBarFill, loadingStageLabel, loadingEta);
   analyzeBtn.disabled = true;
 
   const outputMode = getOutputMode();
@@ -380,10 +458,15 @@ analyzeBtn.addEventListener("click", async () => {
       return;
     }
 
-    renderCategories(data);
+    const result = await pollProgress(data.job_id, {
+      fillEl: loadingBarFill,
+      labelEl: loadingStageLabel,
+      etaEl: loadingEta,
+    });
+    renderCategories(result);
   } catch (err) {
     showError(
-      "Verbindung zum lokalen Server fehlgeschlagen. Bitte erneut versuchen."
+      err.message || "Verbindung zum lokalen Server fehlgeschlagen. Bitte erneut versuchen."
     );
   } finally {
     loadingBox.classList.add("hidden");
@@ -566,6 +649,7 @@ finalizeBtn.addEventListener("click", async () => {
   finalizeBtn.disabled = true;
   reviewRestartBtn.disabled = true;
   finalizeLoading.classList.remove("hidden");
+  resetProgressUI(finalizeBarFill, finalizeStageLabel, finalizeEta);
 
   const excludedCategories = getExcludedCategories();
   const personMode = getPersonMode();
@@ -588,15 +672,21 @@ finalizeBtn.addEventListener("click", async () => {
       return;
     }
 
+    const result = await pollProgress(data.job_id, {
+      fillEl: finalizeBarFill,
+      labelEl: finalizeStageLabel,
+      etaEl: finalizeEta,
+    });
+
     // The token is single-use; whether it succeeded or was already
     // consumed server-side, it's no longer valid — drop it client-side too.
     currentToken = null;
     currentCategories = [];
     reviewCard.classList.add("hidden");
-    renderResult(data);
+    renderResult(result);
   } catch (err) {
     showError(
-      "Verbindung zum lokalen Server fehlgeschlagen. Bitte erneut versuchen."
+      err.message || "Verbindung zum lokalen Server fehlgeschlagen. Bitte erneut versuchen."
     );
   } finally {
     finalizeBtn.disabled = false;

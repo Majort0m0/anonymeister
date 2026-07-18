@@ -92,8 +92,13 @@
       <p id="analyze-hint" class="hint">Bitte zuerst eine Datei oder Zwischenablage wählen.</p>
 
       <div id="loading" class="loading hidden">
-        <div class="spinner" aria-hidden="true"></div>
-        <p>Analyse läuft (kann bei großen Dateien oder mit Tiefencheck mehrere Minuten dauern)&hellip;</p>
+        <div class="progress-bar-track">
+          <div id="loading-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <div class="progress-bar-meta">
+          <span id="loading-stage-label">Wird vorbereitet&hellip;</span>
+          <span id="loading-eta"></span>
+        </div>
       </div>
 
       <div id="error-box" class="error-box hidden" role="alert">
@@ -158,8 +163,13 @@
       </div>
 
       <div id="finalize-loading" class="loading hidden">
-        <div class="spinner" aria-hidden="true"></div>
-        <p>Anonymisierung wird angewendet (kann bei Tiefencheck oder Zusammenfassung etwas dauern)&hellip;</p>
+        <div class="progress-bar-track">
+          <div id="finalize-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <div class="progress-bar-meta">
+          <span id="finalize-stage-label">Wird vorbereitet&hellip;</span>
+          <span id="finalize-eta"></span>
+        </div>
       </div>
     </section>
 

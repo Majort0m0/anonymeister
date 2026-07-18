@@ -34,15 +34,123 @@ Two independent LLM passes live here:
   the user's choices) — its findings are applied directly via the same
   apply_candidates(), which is why it takes excluded_categories itself: it
   must not re-flag something the user deliberately chose to keep visible.
+
+Both passes chunk long input before sending it to the LLM (see
+_split_into_chunks()). This is NOT about context-window truncation — tested
+directly against this app's default model/config, a ~1750-word document was
+recalled perfectly. It is about recall degrading on real (non-synthetic)
+documents once a lot of already-redacted placeholder noise piles up in one
+call: a real 55-PERSON/30-LOCATION medical report reliably caught known
+misses when tested as a short, low-noise excerpt, but missed the same terms
+when checked as one long call over the full, placeholder-dense document.
+Splitting into smaller, lower-density chunks (with overlap so a candidate
+straddling a boundary still appears whole in at least one chunk) trades more
+LLM calls (slower) for better recall — each pass's results are merged by
+exact text match and occurrence counts re-derived against the full text
+afterwards, so chunk boundaries never affect correctness, only how
+thoroughly the model is asked to look.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from typing import Callable
 
 from app.llm.ollama_client import generate
 from app.schemas import AnonymizeResult, DetectedCategory, PiiEntity
+
+# Extraction/classification wants low-variance, systematic output rather than
+# creative sampling (the Modelfile default is temperature=1) — repeated runs
+# against the same text at temperature=1 showed some real terms found every
+# time and others (a genuine blind spot, not noise) found never; a low,
+# near-deterministic temperature at least removes run-to-run noise as a
+# variable, leaving chunking (below) to address density-driven misses.
+_EXTRACTION_TEMPERATURE = 0.2
+
+# Empirically: recall was perfect on an unredacted ~1750-word synthetic test
+# but incomplete on a real, placeholder-dense document of similar length —
+# chunking targets density, not raw length, so the threshold is deliberately
+# well below where context-window truncation would ever matter (see
+# OLLAMA_NUM_CTX). Overlap ensures a candidate phrase split across a chunk
+# boundary still appears intact in at least one chunk.
+_CHUNK_TARGET_WORDS = 350
+_CHUNK_OVERLAP_WORDS = 60
+_CHUNK_THRESHOLD_WORDS = 450  # below this, a single call is not worth splitting
+
+
+def _split_into_chunks(
+    text: str,
+    target_words: int = _CHUNK_TARGET_WORDS,
+    overlap_words: int = _CHUNK_OVERLAP_WORDS,
+    threshold_words: int = _CHUNK_THRESHOLD_WORDS,
+) -> list[str]:
+    """Split `text` into overlapping chunks along line boundaries (never mid-
+    line), so tabular "|"-joined rows stay intact rather than being merged
+    into one whitespace-collapsed blob. Chunk boundaries don't need to be
+    precise: callers only use the returned candidate substrings to redact
+    against the ORIGINAL full text afterwards, never against chunk offsets.
+
+    `threshold_words` (not `target_words`) gates whether splitting happens at
+    all — a text under threshold_words isn't worth the extra Ollama round-trip
+    even though it's already above target_words, the size chunks are cut to
+    once splitting actually is warranted.
+    """
+    lines = text.split("\n")
+    if len(text.split()) <= threshold_words:
+        return [text]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_words = 0
+    for line in lines:
+        line_words = len(line.split())
+        if current and current_words + line_words > target_words:
+            chunks.append("\n".join(current))
+            overlap_lines: list[str] = []
+            overlap_words_count = 0
+            for prev_line in reversed(current):
+                prev_words = len(prev_line.split())
+                if overlap_words_count + prev_words > overlap_words:
+                    break
+                overlap_lines.insert(0, prev_line)
+                overlap_words_count += prev_words
+            current = overlap_lines
+            current_words = overlap_words_count
+        current.append(line)
+        current_words += line_words
+
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def estimate_chunk_count(text: str) -> int:
+    """How many chunks find_candidates()/find_missed_pii() will actually call
+    the LLM for on this text — used by the pipeline to plan progress/ETA
+    before the LLM call(s) happen."""
+    return len(_split_into_chunks(text))
+
+
+def _merge_chunk_candidates(chunk_results: list[list[dict]], full_text: str) -> list[dict]:
+    """Union candidates found across chunks (first-seen category wins for a
+    given text), then recompute occurrence counts against the FULL text —
+    chunk-local counts would undercount (or, with overlap, double-count)
+    occurrences relative to the whole document."""
+    first_seen_category: dict[str, str] = {}
+    for candidates in chunk_results:
+        for candidate in candidates:
+            first_seen_category.setdefault(candidate["text"], candidate["category"])
+
+    merged: list[dict] = []
+    for text, category in first_seen_category.items():
+        occurrences = full_text.count(text)
+        if occurrences == 0:
+            continue
+        merged.append({"text": text, "category": category, "count": occurrences})
+
+    merged.sort(key=lambda c: len(c["text"]), reverse=True)
+    return merged
 
 _SYSTEM_DE = (
     "Du bist ein Datenschutz-Experte. Der folgende Text wurde bereits automatisch "
@@ -77,9 +185,11 @@ _MISSED_SYSTEM_DE = (
     "vollständig auf übersehene, eindeutig identifizierende Angaben, die NICHT durch "
     "einen Platzhalter ersetzt wurden — insbesondere: Personennamen (auch in "
     "Unterschriftszeilen, Grußformeln oder Signaturen am Ende), Orts- oder "
-    "Städtenamen im Fließtext, sowie Geschäfts-, Akten- oder Referenznummern. Melde "
-    "NUR Stellen, die eindeutig identifizierend sind — keine bereits durch Platzhalter "
-    "ersetzten Stellen, keine Vermutungen.{exclusion_note} "
+    "Städtenamen im Fließtext, Namen konkreter Einrichtungen (z. B. Kindergarten, "
+    "Schule, Klinik, Verband oder Firma — auch wenn der Name Teil eines längeren, "
+    "unauffällig klingenden Ausdrucks ist), sowie Geschäfts-, Akten- oder "
+    "Referenznummern. Melde NUR Stellen, die eindeutig identifizierend sind — keine "
+    "bereits durch Platzhalter ersetzten Stellen, keine Vermutungen.{exclusion_note} "
     "Antworte AUSSCHLIESSLICH mit einem JSON-Array von Objekten der Form "
     '{{"text": "<exakte Textstelle>", "category": "<kurze Kategorie>"}}. '
     "Wenn nichts gefunden wird, antworte mit einem leeren Array []. Gib keinerlei "
@@ -92,7 +202,9 @@ _MISSED_SYSTEM_EN = (
     "[PERSON] or [EMAIL_ADDRESS]. Check the text once more, in full, for any remaining "
     "clearly identifying details that were NOT replaced with a placeholder — "
     "especially: person names (including in signature lines, sign-offs, or closings), "
-    "place/city names in the body text, and business, file, or reference numbers. "
+    "place/city names in the body text, names of specific institutions (e.g. a "
+    "kindergarten, school, clinic, association, or company — even as part of a "
+    "longer, unremarkable-sounding phrase), and business, file, or reference numbers. "
     "Only report spans that are clearly identifying — not already-replaced "
     "placeholders, and no guesses.{exclusion_note} "
     'Respond ONLY with a JSON array of objects of the form {{"text": "<exact substring>", '
@@ -136,7 +248,11 @@ def _normalize_category(category: str) -> str:
     return normalized or "PII"
 
 
-def find_candidates(anonymized_text: str, language: str) -> list[dict]:
+def find_candidates(
+    anonymized_text: str,
+    language: str,
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> list[dict]:
     """Run the LLM deep-check pass and return validated candidate substrings.
 
     `anonymized_text` must already be the output of the Presidio pass (see
@@ -150,13 +266,19 @@ def find_candidates(anonymized_text: str, language: str) -> list[dict]:
     first when these are later applied). On any parse failure, or when no
     candidate actually occurs in the text, this degrades gracefully by
     dropping/omitting rather than raising.
+
+    `on_progress(stage, current, total)`, if given, is called once per chunk
+    processed (see module docstring on chunking) with stage="deep_check_find".
     """
     system = _SYSTEM_DE if language.lower().startswith("de") else _SYSTEM_EN
-    return _run_candidate_pass(anonymized_text, system)
+    return _run_chunked_pass(anonymized_text, system, "deep_check_find", on_progress)
 
 
 def find_missed_pii(
-    anonymized_text: str, language: str, excluded_categories: set[str] | None = None
+    anonymized_text: str,
+    language: str,
+    excluded_categories: set[str] | None = None,
+    on_progress: Callable[[str, int, int], None] | None = None,
 ) -> list[dict]:
     """Second LLM sweep, run during finalize() against the ACTUAL final text
     (post category-exclusion, post person-mode) — unlike find_candidates(),
@@ -174,6 +296,8 @@ def find_missed_pii(
 
     Same return shape as find_candidates() — pass straight to
     apply_candidates() (with a distinct `source` label) to apply.
+    `on_progress(stage, current, total)`, if given, is called once per chunk
+    processed with stage="deep_check_missed".
     """
     exclusion_note = ""
     if excluded_categories:
@@ -182,11 +306,37 @@ def find_missed_pii(
 
     system_template = _MISSED_SYSTEM_DE if language.lower().startswith("de") else _MISSED_SYSTEM_EN
     system = system_template.format(exclusion_note=exclusion_note)
-    return _run_candidate_pass(anonymized_text, system)
+    return _run_chunked_pass(anonymized_text, system, "deep_check_missed", on_progress)
+
+
+def _run_chunked_pass(
+    anonymized_text: str,
+    system: str,
+    stage: str,
+    on_progress: Callable[[str, int, int], None] | None,
+) -> list[dict]:
+    chunks = _split_into_chunks(anonymized_text)
+    if on_progress:
+        # Explicit start marker (mirrors every other stage's (0, total) call)
+        # so the caller has a clean timestamp to measure chunk 1's duration
+        # from too, not just chunks 2..N.
+        on_progress(stage, 0, len(chunks))
+    chunk_results: list[list[dict]] = []
+    for i, chunk in enumerate(chunks):
+        chunk_results.append(_run_candidate_pass(chunk, system))
+        # Fired immediately after each chunk's LLM call returns (not batched
+        # after the loop) — the caller times the gap between consecutive
+        # on_progress calls to calibrate a real per-chunk duration estimate
+        # (see server.py); batching these would collapse that measurement.
+        if on_progress:
+            on_progress(stage, i + 1, len(chunks))
+    if len(chunks) == 1:
+        return chunk_results[0]
+    return _merge_chunk_candidates(chunk_results, anonymized_text)
 
 
 def _run_candidate_pass(anonymized_text: str, system: str) -> list[dict]:
-    response = generate(prompt=anonymized_text, system=system)
+    response = generate(prompt=anonymized_text, system=system, temperature=_EXTRACTION_TEMPERATURE)
 
     items = _extract_json_array(response)
     if items is None:

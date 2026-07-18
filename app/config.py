@@ -43,6 +43,15 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 # UI choice — see app.settings.get_ollama_model().
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:12b")
 
+# Ollama's /api/chat defaults to a small context window (historically 2048
+# tokens) unless a request explicitly asks for more — regardless of how much
+# context the model itself supports. Left unset, a long document could be
+# silently truncated before the model ever sees all of it, with no error.
+# 8192 tokens comfortably covers several times the length of a typical
+# document processed by this app while still bounding the extra KV-cache
+# memory every deep-check/summarize call reserves.
+OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
+
 # Curated choices offered in the Systemstatus UI's model picker, covering the
 # realistic RAM/VRAM range end users' machines will have (sizes/RAM figures
 # per ollama.com/library/gemma4 tags, 4-bit quantization). Not exhaustive —

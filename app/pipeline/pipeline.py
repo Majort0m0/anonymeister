@@ -23,6 +23,20 @@ location names, names left in signature lines, business/reference numbers),
 gated behind the same `deep_check` option. See `app/pipeline/deep_check.py`'s
 module docstring for why this one needs `excluded_categories` itself rather
 than filtering its output afterwards.
+
+Progress reporting: `analyze()`/`analyze_file()`/`finalize()` all accept an
+optional `on_progress(stage, current, total)` callback (fired once per stage
+start/end, and once per chunk for the two deep-check stages — see
+deep_check.py) and an optional `on_plan(stages)` callback. `on_plan` fires
+exactly once, as the very first thing each function does, with the full
+ordered `[(stage_name, expected_unit_count), ...]` list for the work it is
+about to do — raw_text (and therefore chunk counts) is already fully known
+at that point in both functions, so the caller (app.server, driving the
+progress-bar UI) gets an accurate plan up front rather than having to
+discover stages as they happen. `analyze_file()` reports its own "ingest"
+stage via on_progress before calling analyze() (whose on_plan intentionally
+covers only the stages from analyze() onward — ingest precedes it and isn't
+part of that plan).
 """
 
 from __future__ import annotations
@@ -97,18 +111,32 @@ def analyze(
     options: PipelineOptions,
     source_bytes: bytes | None = None,
     source_suffix: str | None = None,
+    on_progress: Callable[[str, int, int], None] | None = None,
+    on_plan: Callable[[list[tuple[str, int]]], None] | None = None,
 ) -> tuple[PendingState, list[DetectedCategory]]:
     language = _resolve_language(options.language_hint, detected_language)
 
+    if on_plan:
+        plan: list[tuple[str, int]] = [("presidio_analyze", 1)]
+        if options.deep_check:
+            plan.append(("deep_check_find", deep_check.estimate_chunk_count(raw_text)))
+        on_plan(plan)
+
+    if on_progress:
+        on_progress("presidio_analyze", 0, 1)
     presidio_results = anonymize.analyze(raw_text, language)
     categories = anonymize.summarize_categories(raw_text, presidio_results)
+    if on_progress:
+        on_progress("presidio_analyze", 1, 1)
 
     deep_check_candidates: list = []
     if options.deep_check:
         # Deep-check must only ever see fully-redacted text, regardless of
         # what the user later chooses to exclude from the final output.
         preliminary = anonymize.apply_anonymization(raw_text, presidio_results)
-        deep_check_candidates = deep_check.find_candidates(preliminary.anonymized_text, language)
+        deep_check_candidates = deep_check.find_candidates(
+            preliminary.anonymized_text, language, on_progress=on_progress
+        )
         categories += deep_check.summarize_candidate_categories(deep_check_candidates)
 
     state = PendingState(
@@ -126,9 +154,26 @@ def analyze(
     return state, categories
 
 
-def analyze_file(path: Path, options: PipelineOptions) -> tuple[PendingState, list[DetectedCategory]]:
+def analyze_file(
+    path: Path,
+    options: PipelineOptions,
+    on_progress: Callable[[str, int, int], None] | None = None,
+    on_plan: Callable[[list[tuple[str, int]]], None] | None = None,
+) -> tuple[PendingState, list[DetectedCategory]]:
     suffix = path.suffix.lower()
 
+    # Reported up front (before analyze()'s own on_plan fires, which only
+    # covers the stages from presidio_analyze onward) so the caller always
+    # has a non-empty plan to compute progress against — otherwise ingest
+    # (which, for audio input, is the entire faster-whisper transcription
+    # and often the single slowest stage of the whole job) would show a
+    # frozen 0%/unknown-ETA for its whole duration, reproducing the old
+    # indefinite spinner for exactly the case this feature most needs to
+    # cover. Superseded the moment analyze()'s own on_plan call fires.
+    if on_plan:
+        on_plan([("ingest", 1)])
+    if on_progress:
+        on_progress("ingest", 0, 1)
     if suffix in AUDIO_EXTENSIONS:
         raw_text, detected_language = transcribe_audio(path)
         source_filename = path.name
@@ -142,6 +187,8 @@ def analyze_file(path: Path, options: PipelineOptions) -> tuple[PendingState, li
         # produce an anonymized copy in the original format, alongside the
         # markdown transcript.
         source_bytes = path.read_bytes() if suffix in STRUCTURED_REWRITE_EXTENSIONS else None
+    if on_progress:
+        on_progress("ingest", 1, 1)
 
     return analyze(
         raw_text,
@@ -150,6 +197,8 @@ def analyze_file(path: Path, options: PipelineOptions) -> tuple[PendingState, li
         options,
         source_bytes=source_bytes,
         source_suffix=suffix if source_bytes is not None else None,
+        on_progress=on_progress,
+        on_plan=on_plan,
     )
 
 
@@ -171,7 +220,24 @@ def finalize(
     state: PendingState,
     excluded_categories: set[str],
     person_mode: PersonMode,
+    on_progress: Callable[[str, int, int], None] | None = None,
+    on_plan: Callable[[list[tuple[str, int]]], None] | None = None,
 ) -> FinalizeOutput:
+    if on_plan:
+        plan: list[tuple[str, int]] = [("redact", 1)]
+        if state.deep_check_requested:
+            plan.append(("deep_check_apply", 1))
+            plan.append(("deep_check_missed", deep_check.estimate_chunk_count(state.raw_text)))
+        if state.output_mode in (OutputMode.SUMMARY, OutputMode.BOTH):
+            plan.append(("summarize", 1))
+        plan.append(("render", 1))
+        if state.source_bytes is not None and state.source_suffix is not None:
+            plan.append(("structured_rewrite", 1))
+        on_plan(plan)
+
+    if on_progress:
+        on_progress("redact", 0, 1)
+
     # Built once and reused for the transcript AND every structured-format
     # cell below, so the same real name maps to the same label (number or
     # fake name) across every output produced from this one finalize() call.
@@ -209,11 +275,17 @@ def finalize(
             person_mode=person_mode,
             person_replacer=person_replacer,
         )
+    if on_progress:
+        on_progress("redact", 1, 1)
 
     if state.deep_check_requested:
+        if on_progress:
+            on_progress("deep_check_apply", 0, 1)
         dc_result = deep_check.apply_candidates(text, state.deep_check_candidates, excluded_categories)
         text = dc_result.anonymized_text
         pii_audit += dc_result.entities
+        if on_progress:
+            on_progress("deep_check_apply", 1, 1)
 
         # A second, later LLM sweep against the now-fully-redacted final
         # text, looking for plain PII the pass above still missed outright
@@ -222,7 +294,9 @@ def finalize(
         # Unlike find_candidates() above (run once during analyze(), before
         # the user's category choices exist), this runs here against the
         # true final text so it can be told which categories to leave alone.
-        missed_candidates = deep_check.find_missed_pii(text, state.language, excluded_categories)
+        missed_candidates = deep_check.find_missed_pii(
+            text, state.language, excluded_categories, on_progress=on_progress
+        )
         if missed_candidates:
             missed_result = deep_check.apply_candidates(
                 text, missed_candidates, excluded_categories, source="llm_final_check"
@@ -232,12 +306,18 @@ def finalize(
 
     summary = None
     if state.output_mode in (OutputMode.SUMMARY, OutputMode.BOTH):
+        if on_progress:
+            on_progress("summarize", 0, 1)
         summary = summarize_text(text, state.language)
+        if on_progress:
+            on_progress("summarize", 1, 1)
 
     anonymized_transcript = None
     if state.output_mode in (OutputMode.TRANSCRIPT, OutputMode.BOTH):
         anonymized_transcript = text
 
+    if on_progress:
+        on_progress("render", 0, 1)
     transcript_markdown = None
     if anonymized_transcript is not None:
         transcript_markdown = render_transcript(
@@ -257,10 +337,14 @@ def finalize(
             summary=summary,
             pii_audit=pii_audit,
         )
+    if on_progress:
+        on_progress("render", 1, 1)
 
     structured_bytes: bytes | None = None
     structured_suffix: str | None = None
     if state.source_bytes is not None and state.source_suffix is not None:
+        if on_progress:
+            on_progress("structured_rewrite", 0, 1)
 
         def cell_transform(cell_text: str) -> str:
             cell_results = anonymize.analyze(cell_text, state.language)
@@ -281,6 +365,8 @@ def finalize(
         structured_bytes, structured_suffix = _rewrite_structured(
             state.source_bytes, state.source_suffix, cell_transform
         )
+        if on_progress:
+            on_progress("structured_rewrite", 1, 1)
 
     return FinalizeOutput(
         source_filename=state.source_filename,

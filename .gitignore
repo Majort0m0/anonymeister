@@ -4,6 +4,7 @@ __pycache__/
 output/*
 !output/.gitkeep
 /settings.json
+/progress_calibration.json
 .DS_Store
 .claude/
 
