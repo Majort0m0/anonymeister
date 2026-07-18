@@ -54,7 +54,17 @@ def _rewrite_xlsx(original_bytes: bytes, transform: Callable[[str], str]) -> byt
         raise ValueError(f"could not be opened as an Excel file: {exc}") from exc
 
     for sheet in workbook.worksheets:
-        for row in sheet.iter_rows():
+        # Row 1 is left untouched, on the assumption (true for virtually
+        # every real spreadsheet this app sees) that it's a header row, not
+        # data — an isolated header word like "Vorname" or "E-Mail" has no
+        # sentence context, and spaCy's NER can misclassify it as PII in
+        # exactly the way it does real short-and-context-free data cells (a
+        # header actually getting relabeled "[PERSON47]" was observed),
+        # scrambling column labels in the reusable copy for no privacy
+        # benefit — a header is metadata describing the column, not user
+        # data. See app/pipeline/column_classifier.py, which relies on
+        # headers staying legible to classify columns in the first place.
+        for row in sheet.iter_rows(min_row=2):
             for cell in row:
                 value = cell.value
                 if isinstance(value, str) and not _is_formula(value):
@@ -115,7 +125,9 @@ def _rewrite_xls(original_bytes: bytes, transform: Callable[[str], str]) -> byte
                     # xlrd represents a genuinely blank cell as "" — leave it
                     # out rather than handing empty strings to the callback.
                     continue
-                if isinstance(value, str):
+                # Row 0 is left untouched — see _rewrite_xlsx()'s comment on
+                # why the (assumed) header row is skipped entirely.
+                if isinstance(value, str) and row_idx > 0:
                     value = transform(value)
                 target.cell(row=row_idx + 1, column=col_idx + 1, value=value)
 

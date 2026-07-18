@@ -10,6 +10,7 @@ const SOURCE_LABELS = {
   presidio: "Presidio",
   llm_deep_check: "LLM-Tiefencheck",
   llm_final_check: "LLM-Nachkontrolle",
+  column_header: "Spalten-Erkennung",
 };
 
 const LANGUAGE_LABELS = {

@@ -52,8 +52,19 @@ def rewrite_ods(original_bytes: bytes, transform: Callable[[str], str]) -> bytes
         )
 
     for sheet in tables:
-        for cell in sheet.getElementsByType(odf.table.TableCell):
-            _rewrite_cell(cell, transform)
+        # Row 0 (assumed header) is left untouched — see rewrite_excel.py's
+        # _rewrite_xlsx() for why: an isolated header word has no sentence
+        # context for spaCy's NER to work with and can get misclassified as
+        # PII (observed), scrambling column labels in the reusable copy for
+        # no privacy benefit — a header describes the column, it isn't user
+        # data. This requires iterating row-by-row (TableRow), unlike the
+        # previous flat "every TableCell in the sheet" pass, specifically to
+        # know which cells belong to that first row.
+        for row_index, row in enumerate(sheet.getElementsByType(odf.table.TableRow)):
+            if row_index == 0:
+                continue
+            for cell in row.getElementsByType(odf.table.TableCell):
+                _rewrite_cell(cell, transform)
 
     buffer = io.BytesIO()
     document.save(buffer)

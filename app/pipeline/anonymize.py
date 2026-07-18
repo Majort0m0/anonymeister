@@ -68,6 +68,28 @@ def _find_postal_codes(text: str, results: list) -> list:
     return postal_codes
 
 
+def _is_inside_bracketed_placeholder(text: str, start: int, end: int) -> bool:
+    """True if `text[start:end]` is immediately wrapped in "[" and "]" —
+    i.e. it's (all of, or a piece of) an already-applied redaction
+    placeholder like "[PERSON4]" or "[LOCATION]", not real content.
+
+    analyze() can be called on text that's already partially redacted
+    (app.pipeline.pipeline.finalize() re-runs Presidio fresh after
+    column_classifier's whole-value substitutions change the text — see its
+    docstring) — spaCy's NER can then mistake the placeholder's own inner
+    text for a real entity (observed directly: given `"[PERSON4]"`, it
+    tagged the substring "PERSON4" — without the brackets — as a PERSON,
+    score 0.85). Redacting that "again" would wrap an existing placeholder
+    in a second one (e.g. "[[PERSON5]]"), corrupting the output for no
+    privacy benefit — the content is already redacted.
+    """
+    return start > 0 and end < len(text) and text[start - 1] == "[" and text[end] == "]"
+
+
+def _drop_bracketed_placeholder_matches(text: str, results: list) -> list:
+    return [r for r in results if not _is_inside_bracketed_placeholder(text, r.start, r.end)]
+
+
 def _missing_model_error(exc: OSError) -> RuntimeError:
     message = str(exc)
     for model_name in SPACY_MODELS.values():
@@ -161,6 +183,12 @@ def analyze(text: str, language: str) -> list:
     them server-side (see app.server's token cache) rather than serializing
     them to the frontend; only `summarize_categories()`'s output crosses the
     HTTP boundary.
+
+    Safe to call on text that's already partially redacted (some callers do
+    — see app.pipeline.pipeline.finalize()) — matches wholly inside an
+    existing "[...]" placeholder are dropped (see
+    _is_inside_bracketed_placeholder()) rather than risking a
+    double-redaction like "[[PERSON5]]".
     """
     lang = resolve_language(language)
     analyzer = _get_analyzer()
@@ -169,6 +197,9 @@ def analyze(text: str, language: str) -> list:
         return []
 
     resolved = _resolve_overlaps(raw_results)
+    resolved = _drop_bracketed_placeholder_matches(text, resolved)
+    if not resolved:
+        return []
     postal_codes = _find_postal_codes(text, resolved)
     return _resolve_overlaps(resolved + postal_codes) if postal_codes else resolved
 

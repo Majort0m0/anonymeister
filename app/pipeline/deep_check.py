@@ -528,8 +528,11 @@ def apply_candidates(
     candidates: list[dict],
     excluded_categories: set | None = None,
     source: str = "llm_deep_check",
+    person_replacer: Callable[[str], str] | None = None,
+    person_category: str | None = None,
 ) -> AnonymizeResult:
-    """Actually redact find_candidates()/find_missed_pii() output against `text`.
+    """Actually redact find_candidates()/find_missed_pii() (or
+    column_classifier.extract_column_candidates()) output against `text`.
 
     `text` may not be byte-identical to whatever the candidates were found
     against (the user may have excluded some Presidio categories between the
@@ -545,6 +548,17 @@ def apply_candidates(
     PiiEntity rows so the audit table can distinguish which LLM pass found
     what — the default matches find_candidates()'s original single-pass
     behavior; find_missed_pii() results should pass a different label.
+
+    `person_replacer`/`person_category` are for column_classifier's
+    PERSON_SPALTE candidates specifically: when given and a candidate's
+    category equals `person_category`, that candidate is replaced via
+    person_replacer(raw_text) (the SAME closure app.pipeline.pipeline's
+    finalize() already threads through apply_anonymization() for Presidio-
+    found names) instead of the flat "[category]" label — so a name from a
+    header-classified column gets the same numbered/pseudonymized label as
+    the identical name found elsewhere by Presidio, rather than two
+    different labels for the same real person. Omit both (the default) to
+    get the original flat-label behavior for every candidate, unchanged.
     """
     excluded = excluded_categories or set()
 
@@ -560,7 +574,11 @@ def apply_candidates(
         if occurrences == 0:
             continue
 
-        result_text = result_text.replace(raw_text, f"[{category}]")
+        if person_replacer is not None and category == person_category:
+            replacement = person_replacer(raw_text)
+        else:
+            replacement = f"[{category}]"
+        result_text = result_text.replace(raw_text, replacement)
         counts[category] = counts.get(category, 0) + occurrences
 
     entities = [

@@ -13,7 +13,14 @@ Privacy-critical ordering, unchanged by the two-step split: deep-check's LLM
 call during analysis always runs against a FULLY redacted (no exclusions)
 preliminary text — the user's later category choices affect only what
 appears in the final output, never what is sent to the LLM. summarize_text()
-is likewise only ever given the final, fully-processed anonymized text.
+is likewise only ever given the final, fully-processed anonymized text. This
+"fully redacted" text must include column_classifier's findings too, not
+just Presidio's — column-classified values are specifically ones Presidio's
+own NER is weak on (see column_classifier.py), so `analyze()` computes
+column_candidates BEFORE building deep-check's preliminary text and applies
+them to it (this was a real, since-fixed bug: an earlier version computed
+column_candidates after the deep-check call, sending exactly the values
+this feature exists to protect to Ollama in raw form).
 
 `finalize()` also runs a second, later deep-check pass (`deep_check.
 find_missed_pii()`) against the true final text, once category exclusions
@@ -46,7 +53,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.config import DEFAULT_LANGUAGE, SPACY_MODELS
-from app.pipeline import anonymize, deep_check
+from app.pipeline import anonymize, column_classifier, deep_check
 from app.pipeline.ingest import (
     AUDIO_EXTENSIONS,
     CSV_EXTENSIONS,
@@ -77,6 +84,7 @@ class PendingState:
     raw_text: str
     presidio_results: list
     deep_check_candidates: list = field(default_factory=list)
+    column_candidates: list = field(default_factory=list)
     source_bytes: bytes | None = None  # only set for STRUCTURED_REWRITE_EXTENSIONS
     source_suffix: str | None = None  # original lowercase extension, e.g. ".xlsx"
 
@@ -129,13 +137,37 @@ def analyze(
     if on_progress:
         on_progress("presidio_analyze", 1, 1)
 
+    # Header-driven column classification (see column_classifier.py) — only
+    # possible for structured source formats, which are the only ones
+    # source_bytes is ever set for. Deliberately independent of the
+    # deep_check toggle: this is free, deterministic, local keyword matching
+    # with no LLM involved, not an extra opt-in check. Computed BEFORE the
+    # deep-check block below, not after — deep-check's preliminary text (see
+    # below) must have column-classified values already redacted before it
+    # is sent to Ollama, and column-classified values are specifically the
+    # ones Presidio's own NER is weak on (that's the whole reason this
+    # feature exists), so computing this after would send exactly the
+    # values it's meant to protect to the LLM in raw form.
+    column_candidates: list = []
+    if source_bytes is not None and source_suffix is not None:
+        column_candidates = column_classifier.extract_column_candidates(source_bytes, source_suffix)
+        categories += column_classifier.summarize_column_categories(column_candidates, raw_text)
+
     deep_check_candidates: list = []
     if options.deep_check:
         # Deep-check must only ever see fully-redacted text, regardless of
-        # what the user later chooses to exclude from the final output.
+        # what the user later chooses to exclude from the final output —
+        # this includes column-classified values, redacted here with no
+        # exclusions applied, exactly like Presidio's own redaction two
+        # lines below.
         preliminary = anonymize.apply_anonymization(raw_text, presidio_results)
+        preliminary_text = preliminary.anonymized_text
+        if column_candidates:
+            preliminary_text = deep_check.apply_candidates(
+                preliminary_text, column_candidates, set(), source="column_header"
+            ).anonymized_text
         deep_check_candidates = deep_check.find_candidates(
-            preliminary.anonymized_text, language, on_progress=on_progress
+            preliminary_text, language, on_progress=on_progress
         )
         categories += deep_check.summarize_candidate_categories(deep_check_candidates)
 
@@ -148,6 +180,7 @@ def analyze(
         raw_text=raw_text,
         presidio_results=presidio_results,
         deep_check_candidates=deep_check_candidates,
+        column_candidates=column_candidates,
         source_bytes=source_bytes,
         source_suffix=source_suffix,
     )
@@ -248,15 +281,44 @@ def finalize(
     elif person_mode == PersonMode.NUMBERED:
         person_replacer = make_person_numberer()
 
+    # Column-classified values (see column_classifier.py) are matched by
+    # their FULL original text, so this must run BEFORE Presidio's own
+    # redaction below, against the pristine raw_text — applying it AFTER
+    # would let Presidio's per-span NER catch just PART of a multi-token
+    # classified value first (e.g. a full street address's city/postal-code
+    # tail), permanently defeating the exact-whole-value match for whatever
+    # wasn't independently caught and leaving it exposed in the output (a
+    # real gap, found and fixed before release). state.presidio_results'
+    # offsets are only valid against the ORIGINAL raw_text, so once column
+    # candidates change the text, Presidio must be re-run fresh against the
+    # result — only paid for documents that actually have column candidates
+    # (i.e. structured sources with classifiable headers); every other
+    # document reuses the precomputed results exactly as before.
+    working_text = state.raw_text
+    column_pii_audit: list[PiiEntity] = []
+    presidio_results_for_redaction = state.presidio_results
+    if state.column_candidates:
+        column_result = deep_check.apply_candidates(
+            working_text,
+            state.column_candidates,
+            excluded_categories,
+            source="column_header",
+            person_replacer=person_replacer,
+            person_category="PERSON_SPALTE",
+        )
+        working_text = column_result.anonymized_text
+        column_pii_audit = column_result.entities
+        presidio_results_for_redaction = anonymize.analyze(working_text, state.language)
+
     anon_result = anonymize.apply_anonymization(
-        state.raw_text,
-        state.presidio_results,
+        working_text,
+        presidio_results_for_redaction,
         excluded_types=excluded_categories,
         person_mode=person_mode,
         person_replacer=person_replacer,
     )
     text = anon_result.anonymized_text
-    pii_audit = list(anon_result.entities)
+    pii_audit = list(anon_result.entities) + column_pii_audit
 
     # The original upload filename can itself carry PII (e.g. a person's
     # name) and would otherwise flow untouched into the saved output
@@ -362,9 +424,26 @@ def finalize(
             on_progress("structured_rewrite", 0, 1)
 
         def cell_transform(cell_text: str) -> str:
-            cell_results = anonymize.analyze(cell_text, state.language)
+            # Column candidates matched BEFORE Presidio's per-cell analyze,
+            # against the pristine cell text — same reasoning as the main
+            # text above: a multi-token classified value needs to be matched
+            # as one whole unit before Presidio's own NER has a chance to
+            # catch only part of it. No extra cost here (unlike the main
+            # text path): analyze() already runs fresh per cell regardless
+            # of ordering, so this just changes what it's run against.
+            working_cell_text = cell_text
+            if state.column_candidates:
+                working_cell_text = deep_check.apply_candidates(
+                    working_cell_text,
+                    state.column_candidates,
+                    excluded_categories,
+                    source="column_header",
+                    person_replacer=person_replacer,
+                    person_category="PERSON_SPALTE",
+                ).anonymized_text
+            cell_results = anonymize.analyze(working_cell_text, state.language)
             cell_anon = anonymize.apply_anonymization(
-                cell_text,
+                working_cell_text,
                 cell_results,
                 excluded_types=excluded_categories,
                 person_mode=person_mode,
