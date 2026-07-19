@@ -27,7 +27,7 @@ Details in [`README.md`](README.md).
 
 ## macOS
 
-1. `.dmg` aus den [Releases](https://github.com/Majort0m0/anonymizer/releases/latest)
+1. `.dmg` aus den [Releases](https://github.com/Majort0m0/anonymeister/releases/latest)
    herunterladen und öffnen, App in den `Applications`-Ordner ziehen.
 2. **Beim ersten Start blockiert Gatekeeper die App** („AnonyMeister.app ist
    beschädigt" / „konnte nicht überprüft werden"). Grund: Die App ist nur
@@ -49,7 +49,7 @@ Details in [`README.md`](README.md).
 ## Windows
 
 1. `.exe`-Installer (falls vorhanden, sonst das gepackte `AnonyMeister.exe`
-   direkt) aus den [Releases](https://github.com/Majort0m0/anonymizer/releases/latest)
+   direkt) aus den [Releases](https://github.com/Majort0m0/anonymeister/releases/latest)
    herunterladen.
 2. Installer ausführen bzw. `AnonyMeister.exe` starten. Windows SmartScreen kann
    bei einer unsignierten `.exe` warnen — „Weitere Informationen" →
@@ -59,7 +59,7 @@ Details in [`README.md`](README.md).
 
 ## Linux
 
-1. `.AppImage` aus den [Releases](https://github.com/Majort0m0/anonymizer/releases/latest)
+1. `.AppImage` aus den [Releases](https://github.com/Majort0m0/anonymeister/releases/latest)
    herunterladen, ausführbar machen und starten:
    ```bash
    chmod +x AnonyMeister-x86_64.AppImage
@@ -94,8 +94,8 @@ natives Fenster in einem Container möglich. Schritt für Schritt:
 
 1. **Repo klonen** (oder `docker-compose.yml` + `Dockerfile` herunterladen):
    ```bash
-   git clone https://github.com/Majort0m0/anonymizer.git
-   cd anonymizer
+   git clone https://github.com/Majort0m0/anonymeister.git
+   cd anonymeister
    ```
 2. **Ollama bereitstellen** — entweder auf dem Host installieren und starten
    (https://ollama.com/download, dann `ollama pull gemma4:12b`), oder den

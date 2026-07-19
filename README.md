@@ -120,7 +120,7 @@ uvicorn app.server:app --host 127.0.0.1 --port 8765
 
 ## Installierbare App (macOS / Windows / Linux)
 
-**Fertige Installer:** [aktuellste Version unter GitHub Releases](https://github.com/Majort0m0/anonymizer/releases/latest)
+**Fertige Installer:** [aktuellste Version unter GitHub Releases](https://github.com/Majort0m0/anonymeister/releases/latest)
 (`.dmg` für macOS, `.exe` für Windows, `.AppImage` für Linux) — kein
 Python/`.venv` nötig, direkt herunterladen und starten.
 
