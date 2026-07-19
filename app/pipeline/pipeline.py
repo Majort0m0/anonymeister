@@ -54,9 +54,11 @@ about to do — raw_text (and therefore chunk counts) is already fully known
 at that point in both functions, so the caller (app.server, driving the
 progress-bar UI) gets an accurate plan up front rather than having to
 discover stages as they happen. `analyze_file()` reports its own "ingest"
-stage via on_progress before calling analyze() (whose on_plan intentionally
-covers only the stages from analyze() onward — ingest precedes it and isn't
-part of that plan).
+stage (or, for audio input, delegates to `transcription.transcribe_audio()`'s
+own "transcribe" stage — see that module's docstring) via on_progress before
+calling analyze() (whose on_plan intentionally covers only the stages from
+analyze() onward — ingest/transcribe precede it and aren't part of that
+plan).
 """
 
 from __future__ import annotations
@@ -243,21 +245,26 @@ def analyze_file(
 
     # Reported up front (before analyze()'s own on_plan fires, which only
     # covers the stages from presidio_analyze onward) so the caller always
-    # has a non-empty plan to compute progress against — otherwise ingest
-    # (which, for audio input, is the entire faster-whisper transcription
-    # and often the single slowest stage of the whole job) would show a
-    # frozen 0%/unknown-ETA for its whole duration, reproducing the old
-    # indefinite spinner for exactly the case this feature most needs to
-    # cover. Superseded the moment analyze()'s own on_plan call fires.
-    if on_plan:
-        on_plan([("ingest", 1)])
-    if on_progress:
-        on_progress("ingest", 0, 1)
+    # has a non-empty plan to compute progress against. Audio input is
+    # dispatched to transcribe_audio() with the callbacks passed straight
+    # through instead: it reports its OWN, much more precise "transcribe"
+    # plan (one unit per second of audio, known up front from Whisper's
+    # initial pass) rather than sharing this generic single-unit "ingest"
+    # placeholder — a whole-file transcription used to be reported as one
+    # opaque "ingest" unit, calibrated (see progress_calibration.py) against
+    # the SAME average as near-instant text-document parsing, so an audio
+    # job's real multi-minute duration blew straight past that tiny estimate
+    # and the UI sat stuck (ETA gone, percent pinned near 99%) for the whole
+    # transcription. See transcription.py's docstring for the full story.
     if suffix in AUDIO_EXTENSIONS:
-        raw_text, detected_language = transcribe_audio(path)
+        raw_text, detected_language = transcribe_audio(path, on_progress=on_progress, on_plan=on_plan)
         source_filename = path.name
         source_bytes = None
     else:
+        if on_plan:
+            on_plan([("ingest", 1)])
+        if on_progress:
+            on_progress("ingest", 0, 1)
         ingest_result = ingest_file(path)
         raw_text = ingest_result.raw_text
         detected_language = ingest_result.detected_language or DEFAULT_LANGUAGE
@@ -266,8 +273,8 @@ def analyze_file(
         # produce an anonymized copy in the original format, alongside the
         # markdown transcript.
         source_bytes = path.read_bytes() if suffix in STRUCTURED_REWRITE_EXTENSIONS else None
-    if on_progress:
-        on_progress("ingest", 1, 1)
+        if on_progress:
+            on_progress("ingest", 1, 1)
 
     return analyze(
         raw_text,

@@ -12,13 +12,23 @@ the estimate improve with repeated use (as the user asked for) without
 needing to store a full history or being thrown off by one unusually
 slow/fast outlier run.
 
+"transcribe" (audio transcription — see app/pipeline/transcription.py) is
+chunked too, but by second-of-audio rather than by document chunk, so what
+gets stored under that key is a wall-clock-seconds-per-second-of-audio RATIO,
+not a flat duration — deliberately distinct from the old approach of folding
+a whole transcription into app.pipeline.pipeline.analyze_file()'s generic
+single-unit "ingest" stage, which mixed near-instant text-document parsing
+and multi-minute audio transcription into one shared (and therefore
+text-biased-fast, badly wrong for audio) average.
+
 The three Ollama-backed stages (deep_check_find, deep_check_missed,
-summarize) are actually stored under a per-model key (e.g.
-"deep_check_find::gemma4:e4b") — see app/server.py's _calibration_key() —
-since a fast and a slow model's real durations are wildly different and
-averaging them together made estimates swing badly whenever the user
-switched models. This module itself just stores whatever key it's given;
-the per-model qualification decision lives in app/server.py, not here.
+summarize), plus "transcribe" above, are actually stored under a per-model
+key (e.g. "deep_check_find::gemma4:e4b", "transcribe::small") — see
+app/server.py's _calibration_key() — since a fast and a slow model's real
+durations are wildly different and averaging them together made estimates
+swing badly whenever the user switched models. This module itself just
+stores whatever key it's given; the per-model qualification decision lives
+in app/server.py, not here.
 """
 
 from __future__ import annotations
@@ -40,6 +50,15 @@ _lock = threading.Lock()
 # deliberately much higher than a per-chunk estimate would have been before.
 _DEFAULT_DURATIONS: dict[str, float] = {
     "ingest": 2.0,
+    # Unlike every other entry here (a flat per-stage-run duration), this one
+    # is a RATIO — wall-clock seconds per second of audio — since
+    # transcription.transcribe_audio() reports one unit per second of audio
+    # rather than the whole file as one opaque unit (see that module's
+    # docstring). 0.5 (transcribing at roughly 2x real-time) is a rough,
+    # deliberately middling guess for the app's default "small" model on CPU;
+    # it's also keyed per whisper model size (see app.server._calibration_key)
+    # since e.g. "tiny" vs "large-v3" differ by several times in real speed.
+    "transcribe": 0.5,
     "presidio_analyze": 3.0,
     "deep_check_find": 90.0,  # per chunk (usually the whole document)
     "redact": 0.5,
