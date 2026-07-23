@@ -6,8 +6,9 @@ Details in [`README.md`](README.md).
 
 ## Systemvoraussetzungen (alle Plattformen)
 
-- **Ollama** installiert und gestartet — für den optionalen LLM-Tiefencheck
-  und die Zusammenfassung. Download: https://ollama.com/download
+- **Ollama** installiert und gestartet — für den optionalen LLM-Tiefencheck,
+  die Zusammenfassung und die automatische Transkript-Korrektur bei
+  Audio-Dateien. Download: https://ollama.com/download
   Anschließend ein Modell laden (Standard):
   ```bash
   ollama pull gemma4:e4b
@@ -20,8 +21,9 @@ Details in [`README.md`](README.md).
   Schritt nötig.
 - Kein System-`ffmpeg` nötig — Audiotranskription (`faster-whisper`) bringt
   die benötigten Bibliotheken mit.
-- Ohne laufendes Ollama funktioniert die App trotzdem — nur Tiefencheck und
-  Zusammenfassung stehen dann nicht zur Verfügung.
+- Ohne laufendes Ollama funktioniert die App trotzdem — Tiefencheck und
+  Zusammenfassung stehen dann nicht zur Verfügung, und Audiotranskripte
+  werden automatisch ohne die zusätzliche Korrektur ausgegeben.
 
 ---
 

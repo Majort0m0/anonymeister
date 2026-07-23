@@ -25,6 +25,12 @@ class PersonMode(str, Enum):
     PSEUDONYMIZE = "pseudonymize"  # distinct names -> consistent fake full names
 
 
+class SummaryStyle(str, Enum):
+    COMPACT = "compact"  # short paragraph + optional bullet facts (the original, still-default style)
+    DETAILED = "detailed"  # a "Kernaussagen"/key-takeaways bullet list up front, then a longer,
+    # section-structured summary — see app.pipeline.summarize's module docstring
+
+
 class SourceKind(str, Enum):
     TEXT = "text"      # .txt, .md, clipboard paste
     DOCX = "docx"      # .docx (legacy .doc is rejected with an actionable error)
@@ -44,6 +50,10 @@ class PipelineOptions(BaseModel):
     # without it and is forced off server-side when this is False.
     deep_check: bool = True
     language_hint: Optional[str] = None  # "de" | "en" | None -> auto-detect
+    summary_style: SummaryStyle = SummaryStyle.COMPACT  # chosen at analyze
+    # time (like output_mode above), not at finalize time (unlike
+    # person_mode) — the choice doesn't depend on anything the user reviews
+    # in the category-review step, so there's no reason to defer it.
 
 
 class PiiEntity(BaseModel):

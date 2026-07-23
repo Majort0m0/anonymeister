@@ -33,13 +33,23 @@ Modelle (kein Cloud-API-Aufruf).
   formatiertes Transkript oder eine Zusammenfassung gebraucht wird, ohne dass
   etwas geschwärzt werden soll — in dem Fall entfällt auch die Kategorien-
   Prüfung und der Tiefencheck, da es nichts zu prüfen gibt.
-- **Transkription**: `faster-whisper` für Audio-Input
+- **Transkription**: `faster-whisper` für Audio-Input. Läuft danach immer
+  (kein Schalter) durch eine zusätzliche, lokale LLM-Korrekturstufe
+  (`app/pipeline/transcript_correction.py`), die naheliegende Verhörer aus
+  schlechter Audioqualität kontextbasiert korrigiert, bevor die
+  PII-Erkennung darauf läuft — Stil, Wortwahl und Satzbau bleiben dabei
+  unangetastet. Ist Ollama nicht erreichbar, wird das unkorrigierte
+  Transkript verwendet; Audiotranskription funktioniert also auch ganz ohne
+  Ollama weiter.
 - **Zusammenfassung**: wird aus dem final anonymisierten Text erzeugt, nie aus
   dem Original — unabhängig davon, welche Kategorien der Nutzer von der
   Schwärzung ausgenommen hat. Ausnahme: Ist die Anonymisierung bewusst
   abgeschaltet (siehe oben), erhält die Zusammenfassung den Originaltext: die
-  Verarbeitung bleibt dabei trotzdem vollständig lokal. Die Zusammenfassung
-  wird als eigenständige Markdown-Datei ausgegeben, getrennt vom Transkript.
+  Verarbeitung bleibt dabei trotzdem vollständig lokal. Zwei wählbare Stile:
+  kompakt (kurzer Absatz + Stichpunkte, Standard) oder ausführlich
+  (vorangestellte Kernaussagen als Stichpunktliste, danach eine thematisch
+  gegliederte Zusammenfassung). Die Zusammenfassung wird als eigenständige
+  Markdown-Datei ausgegeben, getrennt vom Transkript.
 - **Ausgabedateien**: `{Originalname}-anonymisiert.md` (Transkript),
   `{Originalname}-zusammenfassung.md` (Zusammenfassung, falls gewählt), und
   bei tabellarischen Quellformaten (`.xlsx`/`.xls`, `.csv`, `.json`, `.ods`)
@@ -90,8 +100,8 @@ Modelle sowie das Ollama-Modell direkt aus der UI nachladen. Eine fehlende
 Ollama-Installation muss manuell installiert werden (die App installiert
 keine Systempakete ohne Zutun).
 
-Welches Ollama-Modell für Tiefencheck und Zusammenfassung genutzt wird, ist
-dort ebenfalls einstellbar — per Dropdown mit kuratierten, nach RAM/VRAM-
+Welches Ollama-Modell für Tiefencheck, Zusammenfassung und die automatische
+Transkript-Korrektur genutzt wird, ist dort ebenfalls einstellbar — per Dropdown mit kuratierten, nach RAM/VRAM-
 Bedarf sortierten Empfehlungen (`gemma4:e2b`/`e4b`/`12b`/`26b`), oder per
 Freitext für jedes andere lokal gepullte Modell. Die Wahl wird lokal
 gespeichert und bleibt über Neustarts hinweg erhalten; ein gesetzter
@@ -232,6 +242,13 @@ formatiges Duplikat.
 - **`faster-whisper`** lädt das gewählte Modell (`WHISPER_MODEL_SIZE` in
   `app/config.py`, Standard `small`) beim ersten Gebrauch automatisch aus dem
   Internet und cached es danach lokal.
+- **Die automatische Transkript-Korrektur ist ebenfalls nicht perfekt** und
+  läuft ohne eigenen Schalter für jede Audiodatei. Sie ist gezielt auf
+  eindeutige Erkennungsfehler beschränkt (siehe `app/pipeline/
+  transcript_correction.py`), kann aber wie jede LLM-Ausgabe gelegentlich
+  danebenliegen — auch hier lohnt sich ein manueller Blick vor der
+  Weitergabe. Ist Ollama nicht erreichbar, entfällt die Korrektur einfach
+  (unkorrigiertes Transkript), ohne die Transkription selbst zu blockieren.
 - **Die anonymisierte Tabellen-Kopie (`.xlsx`/`.csv`/`.json`/`.ods`) kann
   strenger anonymisiert sein als das Markdown-Transkript desselben
   Dokuments.** Für die Tabellen-Kopie wird jede Zelle einzeln neu auf PII

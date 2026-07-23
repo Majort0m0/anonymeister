@@ -58,7 +58,11 @@ stage (or, for audio input, delegates to `transcription.transcribe_audio()`'s
 own "transcribe" stage — see that module's docstring) via on_progress before
 calling analyze() (whose on_plan intentionally covers only the stages from
 analyze() onward — ingest/transcribe precede it and aren't part of that
-plan).
+plan). Audio input has a third such phase in between: `transcript_correction.
+correct_transcript()`'s own "transcript_correction" stage, reported the
+identical way (it calls on_plan/on_progress itself, same as
+transcribe_audio() does) — see that module's docstring for why this step
+exists and runs unconditionally.
 """
 
 from __future__ import annotations
@@ -87,8 +91,9 @@ from app.pipeline.rewrite_excel import rewrite_excel
 from app.pipeline.rewrite_json import rewrite_json
 from app.pipeline.rewrite_ods import rewrite_ods
 from app.pipeline.summarize import summarize_text
+from app.pipeline.transcript_correction import correct_transcript
 from app.pipeline.transcription import transcribe_audio
-from app.schemas import DetectedCategory, OutputMode, PersonMode, PiiEntity, PipelineOptions
+from app.schemas import DetectedCategory, OutputMode, PersonMode, PiiEntity, PipelineOptions, SummaryStyle
 
 
 @dataclass
@@ -97,6 +102,7 @@ class PendingState:
     detected_language: str
     language: str  # resolved language actually used for analysis/LLM calls
     output_mode: OutputMode
+    summary_style: SummaryStyle
     anonymize_requested: bool
     deep_check_requested: bool
     raw_text: str
@@ -162,6 +168,7 @@ def analyze(
             detected_language=detected_language,
             language=language,
             output_mode=options.output_mode,
+            summary_style=options.summary_style,
             anonymize_requested=False,
             deep_check_requested=False,
             raw_text=raw_text,
@@ -222,6 +229,7 @@ def analyze(
         detected_language=detected_language,
         language=language,
         output_mode=options.output_mode,
+        summary_style=options.summary_style,
         anonymize_requested=True,
         deep_check_requested=options.deep_check,
         raw_text=raw_text,
@@ -258,6 +266,16 @@ def analyze_file(
     # transcription. See transcription.py's docstring for the full story.
     if suffix in AUDIO_EXTENSIONS:
         raw_text, detected_language = transcribe_audio(path, on_progress=on_progress, on_plan=on_plan)
+        # Runs unconditionally (regardless of options.anonymize/deep_check) and
+        # before analyze() below, so PII detection — and the plain-transcript
+        # "no anonymization" path — both benefit from the cleaned-up text. Uses
+        # the resolved language (not Whisper's raw code) for prompt selection;
+        # analyze() resolves it again moments later for its own purposes, which
+        # is cheap and harmless. See transcript_correction.py's module
+        # docstring for why this has no user-facing toggle and how it degrades
+        # when Ollama isn't available.
+        resolved_language = _resolve_language(options.language_hint, detected_language)
+        raw_text = correct_transcript(raw_text, resolved_language, on_progress=on_progress, on_plan=on_plan)
         source_filename = path.name
         source_bytes = None
     else:
@@ -329,7 +347,7 @@ def _finalize_without_anonymization(
     if state.output_mode in (OutputMode.SUMMARY, OutputMode.BOTH):
         if on_progress:
             on_progress("summarize", 0, 1)
-        summary = summarize_text(text, state.language, anonymized=False)
+        summary = summarize_text(text, state.language, anonymized=False, style=state.summary_style)
         if on_progress:
             on_progress("summarize", 1, 1)
 
@@ -549,7 +567,7 @@ def finalize(
     if state.output_mode in (OutputMode.SUMMARY, OutputMode.BOTH):
         if on_progress:
             on_progress("summarize", 0, 1)
-        summary = summarize_text(text, state.language)
+        summary = summarize_text(text, state.language, style=state.summary_style)
         if on_progress:
             on_progress("summarize", 1, 1)
 

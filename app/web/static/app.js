@@ -237,6 +237,8 @@ const anonymizeToggle = document.getElementById("anonymize-toggle");
 const deepCheckRow = document.getElementById("deep-check-row");
 const deepCheckToggle = document.getElementById("deep-check-toggle");
 const outputModeRadios = document.querySelectorAll('input[name="output-mode"]');
+const summaryStyleRow = document.getElementById("summary-style-row");
+const summaryStyleRadios = document.querySelectorAll('input[name="summary-style"]');
 const segmentedOptions = document.querySelectorAll(".segmented-option");
 const analyzeBtn = document.getElementById("analyze-btn");
 
@@ -247,6 +249,13 @@ function getOutputMode() {
   return "both";
 }
 
+function getSummaryStyle() {
+  for (const radio of summaryStyleRadios) {
+    if (radio.checked) return radio.value;
+  }
+  return "compact";
+}
+
 function updateSegmentedHighlight() {
   for (const option of segmentedOptions) {
     const input = option.querySelector("input");
@@ -254,10 +263,21 @@ function updateSegmentedHighlight() {
   }
 }
 
+// The summary-style choice is meaningless when no summary is being produced
+// at all — unlike the deep-check row (dimmed but visible when unavailable),
+// this row simply doesn't apply, so it's fully hidden rather than disabled.
+function updateSummaryStyleVisibility() {
+  summaryStyleRow.classList.toggle("hidden", getOutputMode() === "transcript");
+}
+
 for (const radio of outputModeRadios) {
-  radio.addEventListener("change", updateSegmentedHighlight);
+  radio.addEventListener("change", () => {
+    updateSegmentedHighlight();
+    updateSummaryStyleVisibility();
+  });
 }
 updateSegmentedHighlight();
+updateSummaryStyleVisibility();
 
 // Tiefencheck is meaningless without anonymization (nothing gets redacted for
 // it to double-check) — disabling the anonymize toggle disables and unchecks
@@ -374,12 +394,13 @@ async function pollProgress(jobId, { fillEl, labelEl, etaEl }) {
 
 // --- Step 2 -> 3: analyze ---------------------------------------------------
 
-async function analyzeFile(file, outputMode, anonymize, deepCheck) {
+async function analyzeFile(file, outputMode, anonymize, deepCheck, summaryStyle) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("output_mode", outputMode);
   formData.append("anonymize", String(anonymize));
   formData.append("deep_check", String(deepCheck));
+  formData.append("summary_style", summaryStyle);
 
   const response = await fetch("/api/analyze-file", {
     method: "POST",
@@ -388,7 +409,7 @@ async function analyzeFile(file, outputMode, anonymize, deepCheck) {
   return response;
 }
 
-async function analyzeClipboard(text, outputMode, anonymize, deepCheck) {
+async function analyzeClipboard(text, outputMode, anonymize, deepCheck, summaryStyle) {
   const response = await fetch("/api/analyze-clipboard", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -397,6 +418,7 @@ async function analyzeClipboard(text, outputMode, anonymize, deepCheck) {
       output_mode: outputMode,
       anonymize,
       deep_check: deepCheck,
+      summary_style: summaryStyle,
     }),
   });
   return response;
@@ -413,13 +435,14 @@ analyzeBtn.addEventListener("click", async () => {
   const outputMode = getOutputMode();
   const anonymize = anonymizeToggle.checked;
   const deepCheck = deepCheckToggle.checked;
+  const summaryStyle = getSummaryStyle();
 
   try {
     let response;
     if (selectedFile !== null) {
-      response = await analyzeFile(selectedFile, outputMode, anonymize, deepCheck);
+      response = await analyzeFile(selectedFile, outputMode, anonymize, deepCheck, summaryStyle);
     } else {
-      response = await analyzeClipboard(clipboardPreview.value, outputMode, anonymize, deepCheck);
+      response = await analyzeClipboard(clipboardPreview.value, outputMode, anonymize, deepCheck, summaryStyle);
     }
 
     const data = await response.json();

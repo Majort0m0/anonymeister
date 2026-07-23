@@ -18,6 +18,12 @@ Ein zusätzlicher, langsamerer Durchlauf durch ein lokales Sprachmodell, *nachde
 **Ausgabe: Transkript / Zusammenfassung / Beides**
 Legt fest, was am Ende erzeugt wird. Das Transkript ist der vollständige anonymisierte Text, die Zusammenfassung eine kurze KI-generierte Übersicht davon. Beide werden als **getrennte** Markdown-Dateien gespeichert.
 
+**Zusammenfassungsstil: Kompakt / Ausführlich**
+Nur sichtbar, wenn eine Zusammenfassung erzeugt wird. "Kompakt" liefert einen kurzen Absatz mit den wichtigsten Punkten. "Ausführlich" stellt zunächst die Kernaussagen als Stichpunktliste voran, gefolgt von einer längeren, in thematische Abschnitte gegliederten Zusammenfassung.
+
+**Automatische Transkript-Korrektur (nur Audio)**
+Läuft bei Audio-Eingaben immer automatisch, ohne eigenen Schalter: Da die Aufnahmequalität die Spracherkennung beeinträchtigen kann, prüft ein zusätzlicher, lokaler KI-Durchlauf das rohe Transkript auf offensichtliche Erkennungsfehler und korrigiert nur eindeutig unsinnige Stellen — Stil, Wortwahl und Satzbau bleiben unangetastet. Läuft vor der eigentlichen Anonymisierung, damit auch die PII-Erkennung vom bereinigten Text profitiert. Ist kein Ollama erreichbar, wird einfach das unkorrigierte Transkript verwendet — Audio-Transkription funktioniert also weiterhin auch ohne installiertes Ollama.
+
 **Kategorie abwählen**
 Lässt eine erkannte Kategorie unangetastet im Ergebnistext stehen, statt sie zu schwärzen — z. B. wenn Ortsangaben für den Zweck des Dokuments unproblematisch sind.
 
@@ -41,7 +47,7 @@ Bei Tabellenformaten (Excel/CSV/JSON/ODS) entsteht zusätzlich zum Markdown-Tran
 Die App nutzt zwei Arten lokaler KI-Modelle, beide laufen vollständig auf diesem Rechner:
 
 **Ollama (Sprachmodell)**
-Wird für den Tiefencheck und die Zusammenfassung gebraucht. Falls nicht installiert: [ollama.com/download](https://ollama.com/download), danach das gewählte Modell laden (z. B. `ollama pull gemma4:12b`). Welches Modell genutzt wird, lässt sich im Bereich „Systemstatus" per Dropdown umstellen — kuratierte Vorschläge nach RAM/VRAM-Bedarf sortiert (kleiner = weniger Ressourcen, größer = bessere Qualität), oder als Freitext jedes andere lokal gepullte Modell.
+Wird für den Tiefencheck, die Zusammenfassung und die automatische Transkript-Korrektur gebraucht. Falls nicht installiert: [ollama.com/download](https://ollama.com/download), danach das gewählte Modell laden (z. B. `ollama pull gemma4:12b`). Welches Modell genutzt wird, lässt sich im Bereich „Systemstatus" per Dropdown umstellen — kuratierte Vorschläge nach RAM/VRAM-Bedarf sortiert (kleiner = weniger Ressourcen, größer = bessere Qualität), oder als Freitext jedes andere lokal gepullte Modell.
 
 **faster-whisper (Spracherkennung)**
 Wird nur für Audio-Dateien gebraucht und lädt das gewählte Modell beim ersten Gebrauch automatisch herunter — danach läuft es offline. Kein System-`ffmpeg` nötig, das ist bereits in `faster-whisper` enthalten. Die Modellgröße lässt sich ebenfalls im Bereich „Systemstatus" umstellen — von `tiny` (sehr sparsam, weniger genau) bis `large-v3` (beste Qualität, braucht deutlich mehr Arbeitsspeicher); Standard ist `small` als guter Kompromiss.
@@ -55,9 +61,10 @@ Der Bereich „Systemstatus" unten in der App zeigt an, was davon fehlt, und kan
 
 - **Alles läuft lokal.** Es gibt keine Cloud-Anbindung und keinen externen API-Aufruf — weder für die Dokumentenanalyse noch für die KI-Auswertung.
 - **Rohdaten verlassen nie diesen Rechner.** Hochgeladene Dateien werden nur temporär auf der Festplatte zwischengespeichert und nach der Analyse sofort gelöscht.
-- **Das Sprachmodell (Ollama) sieht nur bereits anonymisierten Text.** Der Tiefencheck und die Zusammenfassung laufen ausschließlich über bereits geschwärzten Text — nie über das Originaldokument.
+- **Das Sprachmodell (Ollama) läuft ausschließlich lokal auf diesem Rechner — nie über eine Cloud oder das Internet.** Der erste Tiefencheck-Durchlauf sieht dafür bewusst den Originaltext (siehe „Tiefencheck" oben), damit er Spitznamen und Rollenbezeichnungen korrekt der richtigen Person zuordnen kann; ein zweiter Durchlauf nach der Anonymisierung sowie die Zusammenfassung sehen dagegen den bereits fertig anonymisierten Text. Bei Audio-Eingaben sieht auch die automatische Transkript-Korrektur (siehe oben) bewusst den noch unbearbeiteten Text, bevor irgendetwas geschwärzt wird. Ist die Anonymisierung bewusst ausgeschaltet, erhält auch die Zusammenfassung den Originaltext — auch dann bleibt die Verarbeitung vollständig lokal.
 - **Ergebnisdateien liegen lokal.** Anonymisierte Dokumente werden in einem lokalen Ordner dieser App gespeichert und stehen nur auf diesem Rechner zur Verfügung.
 - **Keine Analyse, kein Tracking.** Diese App sammelt keine Nutzungsdaten und sendet nichts an Dritte.
+- **Auf Updates prüfen ist die einzige externe Verbindung.** Der Systemstatus-Bereich fragt beim Start automatisch (und jederzeit erneut per Klick) bei GitHub ab, ob eine neuere Version verfügbar ist. Dabei werden ausschließlich die installierte Versionsnummer und die öffentliche GitHub-Release-API abgefragt — niemals Dokumenteninhalte, Dateinamen oder sonstige Daten.
 
 ---
 

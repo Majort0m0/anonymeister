@@ -90,6 +90,29 @@ callers of `analyze*`/`finalize`.
    block-level elements itself instead of calling `odf.teletype.extractText()` on
    the whole document tree — the latter flattens all paragraphs into one run with
    no separators and also picks up unrelated `<office:meta>` text.
+
+   **Audio only**: right after `transcribe_audio()` returns and before the text
+   reaches step 2 below, `app/pipeline/pipeline.py`'s `analyze_file()` runs it
+   through `app/pipeline/transcript_correction.py`'s `correct_transcript()` —
+   a local-LLM pass that context-corrects likely mis-transcriptions (the
+   premise: source audio quality can be poor, causing Whisper to mishear
+   words), so PII detection in step 2 sees the cleaned-up text too. Unlike
+   deep-check/summarize below, this has **no user-facing toggle** — it is a
+   fixed part of how audio is processed, deliberately. It is also this app's
+   *only* unconditional (non-opt-in) Ollama call, which matters because
+   Ollama is otherwise always optional (see Installationshinweise.md): a
+   `RuntimeError` from `app/llm/ollama_client.py`'s `generate()` (raised
+   whenever Ollama can't be reached) is caught per-chunk and degrades
+   silently to the uncorrected text for that chunk and every remaining one
+   in the same run — no error surfaces, and no further Ollama calls are
+   attempted once one has failed, since `ollama.Client` is constructed with
+   an unbounded timeout and a merely-unresponsive (not absent) host could
+   otherwise hang indefinitely. Chunking is sentence-boundary-based and
+   non-overlapping (unlike deep-check's chunker below — see that module's
+   own docstring for why line-based/overlapping doesn't fit a
+   continuous-prose-rewriting task), and deliberately smaller
+   (~900-1200 target words) since this task's output is close to 1:1 with
+   its input length, unlike deep-check's compact JSON output.
 2. **Analyze** (`app/pipeline/anonymize.py`'s `analyze()`) — Presidio
    (`AnalyzerEngine`) configured for German + English via spaCy, detection only,
    no redaction. Several non-obvious fixes baked into this module, worth
@@ -191,7 +214,17 @@ callers of `analyze*`/`finalize`.
    anonymize=False` (see below), where `summarize_text()` is deliberately
    called with `anonymized=False` against the raw original text instead —
    that selects a different prompt that doesn't falsely claim placeholders
-   are present.
+   are present. A second, independent axis, `PipelineOptions.summary_style`
+   (`SummaryStyle` in `schemas.py`, chosen at analyze time like `output_mode`
+   — not at finalize time like `person_mode` below, since it doesn't depend
+   on anything the category-review step surfaces): `COMPACT` (the original,
+   still-default style — short paragraph + optional bullet facts) or
+   `DETAILED` (a "Kernaussagen"/key-takeaways bullet list up front, then a
+   longer, section-structured summary). `summarize_text()` picks from 8
+   prompt constants (style × anonymized × DE/EN) rather than one, since style
+   and the anonymized/raw axis are independent choices. `render_summary()`
+   below needs no changes for this — it treats the summary as opaque
+   markdown text regardless of which prompt produced it.
 6. **Render** (`app/pipeline/render_markdown.py`'s `render_transcript()` /
    `render_summary()`) — two independent functions, not one combined document:
    the summary is always a separate markdown file from the transcript, each

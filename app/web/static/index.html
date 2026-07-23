@@ -146,6 +146,21 @@
               </label>
             </div>
           </fieldset>
+
+          <fieldset id="summary-style-row" class="option-row">
+            <legend>Zusammenfassungsstil</legend>
+            <div class="segmented" role="radiogroup" aria-label="Zusammenfassungsstil">
+              <label class="segmented-option">
+                <input type="radio" name="summary-style" value="compact" checked>
+                <span>Kompakt</span>
+              </label>
+              <label class="segmented-option">
+                <input type="radio" name="summary-style" value="detailed">
+                <span>Ausführlich</span>
+              </label>
+            </div>
+            <p class="option-desc">Kompakt: kurzer Absatz mit den wichtigsten Punkten. Ausführlich: vorangestellte Kernaussagen als Stichpunkte, danach eine strukturierte, thematisch gegliederte Zusammenfassung.</p>
+          </fieldset>
         </div>
       </div>
       <div class="step-nav">
@@ -335,6 +350,24 @@
             Text, die Zusammenfassung eine kurze KI-generierte Übersicht davon. Beide werden als
             <strong>getrennte</strong> Markdown-Dateien gespeichert.
           </dd>
+          <dt>Zusammenfassungsstil: Kompakt / Ausführlich</dt>
+          <dd>
+            Nur sichtbar, wenn eine Zusammenfassung erzeugt wird. "Kompakt" liefert einen kurzen
+            Absatz mit den wichtigsten Punkten. "Ausführlich" stellt zunächst die Kernaussagen als
+            Stichpunktliste voran, gefolgt von einer längeren, in thematische Abschnitte
+            gegliederten Zusammenfassung.
+          </dd>
+          <dt>Automatische Transkript-Korrektur (nur Audio)</dt>
+          <dd>
+            Läuft bei Audio-Eingaben immer automatisch, ohne eigenen Schalter: Da die
+            Aufnahmequalität die Spracherkennung beeinträchtigen kann, prüft ein zusätzlicher,
+            lokaler KI-Durchlauf das rohe Transkript auf offensichtliche Erkennungsfehler und
+            korrigiert nur eindeutig unsinnige Stellen — Stil, Wortwahl und Satzbau bleiben
+            unangetastet. Läuft vor der eigentlichen Anonymisierung, damit auch die
+            PII-Erkennung vom bereinigten Text profitiert. Ist kein Ollama erreichbar, wird
+            einfach das unkorrigierte Transkript verwendet — Audio-Transkription funktioniert
+            also weiterhin auch ohne installiertes Ollama.
+          </dd>
           <dt>Einzelne Textstelle oder ganze Kategorie abwählen</dt>
           <dd>
             Lässt eine Textstelle (oder — per Kategorie-Checkbox — alle Stellen einer Kategorie auf
@@ -393,7 +426,8 @@
         <dl>
           <dt>Ollama (Sprachmodell)</dt>
           <dd>
-            Wird für den Tiefencheck und die Zusammenfassung gebraucht. Falls nicht installiert:
+            Wird für den Tiefencheck, die Zusammenfassung und die automatische
+            Transkript-Korrektur gebraucht. Falls nicht installiert:
             <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">ollama.com/download</a>,
             danach das gewählte Modell laden (z. B. <code>ollama pull gemma4:e4b</code>). Welches Modell
             verwendet wird, lässt sich oben im Systemstatus per Dropdown umstellen — kleinere Modelle
@@ -421,7 +455,7 @@
         <ul class="help-privacy-list">
           <li><strong>Alles läuft lokal.</strong> Es gibt keine Cloud-Anbindung und keinen externen API-Aufruf — weder für die Dokumentenanalyse noch für die KI-Auswertung.</li>
           <li><strong>Rohdaten verlassen nie diesen Rechner.</strong> Hochgeladene Dateien werden nur temporär auf der Festplatte zwischengespeichert und nach der Analyse sofort gelöscht.</li>
-          <li><strong>Das Sprachmodell (Ollama) läuft ausschließlich lokal auf diesem Rechner — nie über eine Cloud oder das Internet.</strong> Der erste Tiefencheck-Durchlauf sieht dafür bewusst den Originaltext (siehe „Tiefencheck" oben), damit er Spitznamen und Rollenbezeichnungen korrekt der richtigen Person zuordnen kann; ein zweiter Durchlauf nach der Anonymisierung sowie die Zusammenfassung sehen dagegen den bereits fertig anonymisierten Text. Ist die Anonymisierung bewusst ausgeschaltet, erhält auch die Zusammenfassung den Originaltext — auch dann bleibt die Verarbeitung vollständig lokal.</li>
+          <li><strong>Das Sprachmodell (Ollama) läuft ausschließlich lokal auf diesem Rechner — nie über eine Cloud oder das Internet.</strong> Der erste Tiefencheck-Durchlauf sieht dafür bewusst den Originaltext (siehe „Tiefencheck" oben), damit er Spitznamen und Rollenbezeichnungen korrekt der richtigen Person zuordnen kann; ein zweiter Durchlauf nach der Anonymisierung sowie die Zusammenfassung sehen dagegen den bereits fertig anonymisierten Text. Bei Audio-Eingaben sieht auch die automatische Transkript-Korrektur (siehe oben) bewusst den noch unbearbeiteten Text, bevor irgendetwas geschwärzt wird. Ist die Anonymisierung bewusst ausgeschaltet, erhält auch die Zusammenfassung den Originaltext — auch dann bleibt die Verarbeitung vollständig lokal.</li>
           <li><strong>Ergebnisdateien liegen lokal.</strong> Anonymisierte Dokumente werden in einem lokalen Ordner dieser App gespeichert und stehen nur auf diesem Rechner zur Verfügung.</li>
           <li><strong>Keine Analyse, kein Tracking.</strong> Diese App sammelt keine Nutzungsdaten und sendet nichts an Dritte.</li>
           <li><strong>Auf Updates prüfen ist die einzige externe Verbindung.</strong> Der Systemstatus-Bereich fragt beim Start automatisch (und jederzeit erneut per Klick) bei GitHub ab, ob eine neuere Version verfügbar ist. Dabei werden ausschließlich die installierte Versionsnummer und die öffentliche GitHub-Release-API abgefragt — niemals Dokumenteninhalte, Dateinamen oder sonstige Daten.</li>

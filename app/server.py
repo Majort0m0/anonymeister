@@ -73,6 +73,7 @@ from app.schemas import (
     PipelineOptions,
     PipelineResult,
     ReplaceTextRequest,
+    SummaryStyle,
     UpdateCheckResult,
     VersionInfo,
 )
@@ -101,6 +102,7 @@ class ClipboardAnalyzeRequest(BaseModel):
     output_mode: OutputMode = OutputMode.BOTH
     anonymize: bool = True
     deep_check: bool = True
+    summary_style: SummaryStyle = SummaryStyle.COMPACT
 
 
 class DependencyFixRequest(BaseModel):
@@ -238,6 +240,7 @@ def _sweep_stale_jobs() -> None:
 _STAGE_LABELS = {
     "ingest": "Datei wird eingelesen",
     "transcribe": "Audio wird transkribiert",
+    "transcript_correction": "Transkript wird auf Ungenauigkeiten geprüft",
     "presidio_analyze": "Automatische Erkennung läuft",
     "deep_check_find": "LLM-Tiefencheck läuft",
     "redact": "Anonymisierung wird angewendet",
@@ -264,7 +267,13 @@ _OVERTIME_FACTOR = 1.5
 # one shared average made the ETA swing wildly and appear to "reset" whenever
 # a chunk finished much faster/slower than a stale, other-model-trained
 # estimate expected (observed directly: switching models between test runs).
-_MODEL_DEPENDENT_STAGES = {"deep_check_find", "deep_check_missed", "deep_check_locations", "summarize"}
+_MODEL_DEPENDENT_STAGES = {
+    "deep_check_find",
+    "deep_check_missed",
+    "deep_check_locations",
+    "summarize",
+    "transcript_correction",
+}
 
 # Same idea, but for the faster-whisper model size — "tiny" vs "large-v3" can
 # differ several-fold in real transcription speed, so a shared average would
@@ -498,6 +507,7 @@ async def analyze_file_route(
     output_mode: OutputMode = Form(OutputMode.BOTH),
     anonymize: bool = Form(True),
     deep_check: bool = Form(True),
+    summary_style: SummaryStyle = Form(SummaryStyle.COMPACT),
 ) -> JSONResponse:
     try:
         upload_name = Path(file.filename or "").name or "upload"
@@ -510,7 +520,12 @@ async def analyze_file_route(
     # deep_check is meaningless without anonymization (see schemas.py's
     # PipelineOptions.anonymize docstring) — enforced here rather than trusting
     # the client to keep the two in sync.
-    options = PipelineOptions(output_mode=output_mode, anonymize=anonymize, deep_check=deep_check and anonymize)
+    options = PipelineOptions(
+        output_mode=output_mode,
+        anonymize=anonymize,
+        deep_check=deep_check and anonymize,
+        summary_style=summary_style,
+    )
     job_id, job = _create_job()
     threading.Thread(
         target=_run_analyze_file_job, args=(job, tmp_path, options, tmp_dir), daemon=True
@@ -542,6 +557,7 @@ def analyze_clipboard_route(payload: ClipboardAnalyzeRequest) -> JSONResponse:
         output_mode=payload.output_mode,
         anonymize=payload.anonymize,
         deep_check=payload.deep_check and payload.anonymize,
+        summary_style=payload.summary_style,
     )
     job_id, job = _create_job()
     threading.Thread(

@@ -30,9 +30,18 @@ def generate(prompt: str, system: str | None = None, temperature: float | None =
         # generation (summarize) are unaffected unless they opt in too.
         options["temperature"] = temperature
 
+    # The response-shape extraction below is INSIDE this try, not after it —
+    # every caller (including transcript_correction.py's Ollama-unavailable
+    # fallback, which catches only RuntimeError to decide whether to degrade
+    # gracefully) depends on ANY failure here surfacing as RuntimeError, not
+    # a raw KeyError/AttributeError from an unexpected response shape (e.g.
+    # a future/older ollama-python version, or a malformed server reply)
+    # slipping past that catch and crashing the caller outright.
     try:
         client = ollama.Client(host=OLLAMA_HOST)
         response = client.chat(model=model, messages=messages, options=options)
+        message = response["message"] if isinstance(response, dict) else response.message
+        content = message["content"] if isinstance(message, dict) else message.content
     except Exception as exc:
         raise RuntimeError(
             f"Could not reach the local Ollama model '{model}' at {OLLAMA_HOST}. "
@@ -40,6 +49,4 @@ def generate(prompt: str, system: str | None = None, temperature: float | None =
             f'pulled (e.g. "ollama pull {model}").'
         ) from exc
 
-    message = response["message"] if isinstance(response, dict) else response.message
-    content = message["content"] if isinstance(message, dict) else message.content
     return content
