@@ -359,6 +359,33 @@ launched from Finder doesn't inherit Homebrew's PATH additions from the
 user's shell profile — and "fixing" that detection wouldn't have changed
 whether transcription actually worked, since it was never used for decoding).
 
+`POST /api/dependencies/fix` (which drives auto-fix) is **asynchronous**, not
+a plain synchronous `def` returning a `DependencyStatus`/error directly — it
+uses the exact same job/threading.Thread/`GET /api/progress/{job_id}` polling
+pattern as `/api/analyze-file`/`/api/finalize` (`app/server.py`'s
+`_run_dependency_fix_job`), always returning `{job_id}` immediately, with the
+eventual `DependencyStatus` or error only available via a later poll. This
+exists specifically for Ollama model pulls: `setup_check.py`'s
+`_ollama_pull_via_http()` parses Ollama's streamed NDJSON `/api/pull`
+progress (previously just drained and discarded) into a terminal-style log
+(`_Job.pull_log`, in-place-updated per layer digest, not appended every tick)
+plus a real overall percent from byte counts — `get_progress()` deliberately
+skips `_recompute_progress()`'s calibrated-duration ETA math for these jobs
+(`if not done and job.pull_log is None`), since that function unconditionally
+zeroes `job.percent` when `job.plan` is empty (always true here, as pull jobs
+never call `on_plan`/`on_progress`) and real byte progress needs no
+calibration guessing anyway. The other `attempt_auto_install()` branches
+(spaCy download, plain `ollama` check, whisper cache) don't pass
+`on_pull_progress` and go through this same job wrapper unchanged — they just
+never populate `pull_log`, so the frontend's dependency-fix UI simply shows
+its normal spinner instead of the terminal log for those. A pull whose
+connection drops mid-download without ever sending Ollama's `"success"`
+status is treated as a failure (`_ollama_pull_via_http()` explicitly tracks
+whether it saw that status, not just whether the HTTP request itself raised —
+chunked-transfer decoding treats a mid-stream connection drop as plain EOF,
+not an exception, so relying on try/except alone would silently report
+success for an interrupted download).
+
 **Ollama model and Whisper size are both user-configurable at runtime, not
 just at build time** (`app/settings.py`). The desktop app ships with
 `OLLAMA_MODEL` hardcoded to `gemma4:e4b` and `WHISPER_MODEL_SIZE` to `small`
@@ -378,7 +405,19 @@ resource-labeled list (`app.config.CURATED_OLLAMA_MODELS` —
 tags; `app.config.CURATED_WHISPER_MODELS` — `tiny`/`small`/`medium`/
 `large-v3` per faster-whisper/CTranslate2 community RAM benchmarks, one entry
 each marked `recommended`) or type any other locally available model/size as
-free text. Both choices persist to one shared `settings.json` in the same
+free text. The two pickers aren't perfectly symmetric, though: only the
+Ollama one is constructed with `annotateLocalAvailability: true`, which
+fetches a third endpoint, `GET /api/ollama-models`
+(`setup_check.py`'s `list_ollama_models()`, built on a shared
+`_ollama_tags_payload()` helper also used by `_ollama_tags()`), and marks
+curated options already present in Ollama's local inventory — there's no
+equivalent concept for Whisper sizes (a wholly different, faster-whisper-own
+download-on-first-use cache, not something this app can enumerate the same
+way). `GET /api/ollama-models` also independently backs a standalone
+"lokal installierte Ollama-Modelle" list elsewhere in the Systemstatus panel
+(`app.js`'s `loadLocalOllamaModels()`), showing every locally-pulled model
+(name + size) regardless of whether it's one of the curated options. Both
+picker choices persist to one shared `settings.json` in the same
 per-OS app-data directory as `OUTPUT_DIR` (see `app.config.APP_DATA_DIR` —
 `app/settings.py`'s `_SETTINGS_PATH`), and survive restarts.
 `app.settings.get_ollama_model()`/`get_whisper_model_size()` (both built on

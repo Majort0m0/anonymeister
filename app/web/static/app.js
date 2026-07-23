@@ -347,6 +347,15 @@ function resetProgressUI(fillEl, labelEl, etaEl) {
   etaEl.textContent = "";
 }
 
+// Shared pollProgress() render callback for analyze/finalize — there is
+// only ever one loading-overlay instance in the app (see index.html), so
+// both call sites render into the exact same three elements.
+function renderLoadingProgress(data) {
+  loadingBarFill.style.width = `${data.percent}%`;
+  loadingStageLabel.textContent = data.stage_label;
+  loadingEta.textContent = formatEta(data.eta_seconds);
+}
+
 // A single dropped fetch (e.g. a momentary loopback hiccup) shouldn't abort
 // a multi-minute job outright — the job keeps running server-side either
 // way, so retrying a few times is strictly better than surfacing a terminal
@@ -354,7 +363,13 @@ function resetProgressUI(fillEl, labelEl, etaEl) {
 // keep failing past this budget and still surface as an error.
 const PROGRESS_POLL_MAX_CONSECUTIVE_FAILURES = 5;
 
-async function pollProgress(jobId, { fillEl, labelEl, etaEl }) {
+// `onUpdate(data)` is called with the raw /api/progress response on every
+// poll (including the final done:true one) — callers render whatever shape
+// of progress they need from it (a single bar+label+ETA for analyze/
+// finalize, or a terminal-style log for a dependency-fix pull; see
+// fixDependency()). The polling loop itself (retry budget, done/error
+// handling) is identical for all of them, so only the render step varies.
+async function pollProgress(jobId, onUpdate) {
   let consecutiveFailures = 0;
   while (true) {
     let response;
@@ -376,15 +391,12 @@ async function pollProgress(jobId, { fillEl, labelEl, etaEl }) {
     }
 
     const data = await response.json();
-    fillEl.style.width = `${data.percent}%`;
-    labelEl.textContent = data.stage_label;
-    etaEl.textContent = formatEta(data.eta_seconds);
+    onUpdate(data);
 
     if (data.done) {
       if (data.error) {
         throw new Error(data.error);
       }
-      fillEl.style.width = "100%";
       return data.result;
     }
 
@@ -453,11 +465,7 @@ analyzeBtn.addEventListener("click", async () => {
       return;
     }
 
-    const result = await pollProgress(data.job_id, {
-      fillEl: loadingBarFill,
-      labelEl: loadingStageLabel,
-      etaEl: loadingEta,
-    });
+    const result = await pollProgress(data.job_id, renderLoadingProgress);
     renderCategories(result);
   } catch (err) {
     goToStep(2);
@@ -734,11 +742,7 @@ finalizeBtn.addEventListener("click", async () => {
       return;
     }
 
-    const result = await pollProgress(data.job_id, {
-      fillEl: loadingBarFill,
-      labelEl: loadingStageLabel,
-      etaEl: loadingEta,
-    });
+    const result = await pollProgress(data.job_id, renderLoadingProgress);
 
     // The token is single-use; whether it succeeded or was already
     // consumed server-side, it's no longer valid — drop it client-side too.
@@ -1248,21 +1252,46 @@ async function fixDependency(name, button) {
   button.appendChild(spinner);
   button.append(" Wird installiert…");
 
+  // Terminal-style log box for an Ollama model pull's real streamed
+  // progress (see app/pipeline/setup_check.py's _ollama_pull_via_http()) —
+  // only ever populated (data.pull_log non-empty) for that one dependency
+  // kind; every other "Reparieren" target (spaCy models, ollama itself,
+  // whisper cache) just never fills it, so the box simply never appears
+  // for those. Lives only for the duration of this one fix — the
+  // loadDependencies() call in `finally` rebuilds the whole list anyway.
+  // Appended into .dependency-body (a plain block container: name/detail/
+  // hint), not next to `button` itself — .dependency-item is a flex ROW,
+  // so a sibling of the button would squeeze in beside it instead of
+  // flowing onto its own line below the row's text content.
+  const logBox = document.createElement("pre");
+  logBox.className = "pull-log hidden";
+  button.previousElementSibling.appendChild(logBox);
+
   try {
     const response = await fetch("/api/dependencies/fix", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    const data = await response.json();
     if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
       statusLoading.classList.remove("hidden");
       statusLoading.textContent = data.error || "Reparatur fehlgeschlagen.";
+      return;
     }
+    const { job_id } = await response.json();
+    await pollProgress(job_id, (data) => {
+      if (data.pull_log && data.pull_log.length > 0) {
+        logBox.classList.remove("hidden");
+        logBox.textContent = data.pull_log.join("\n");
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+    });
   } catch (err) {
     statusLoading.classList.remove("hidden");
-    statusLoading.textContent = "Reparatur fehlgeschlagen: Verbindung zum Server nicht möglich.";
+    statusLoading.textContent = err.message || "Reparatur fehlgeschlagen: Verbindung zum Server nicht möglich.";
   } finally {
+    logBox.remove();
     button.disabled = false;
     button.textContent = originalText;
     await loadDependencies();
@@ -1273,20 +1302,24 @@ async function fixDependency(name, button) {
 // size): same curated-select-plus-free-text-fallback UI and the same
 // GET/POST /api/settings/<endpoint> shape, just different element ids and
 // backend endpoint.
-function initModelPicker({ idPrefix, endpoint }) {
+function initModelPicker({ idPrefix, endpoint, annotateLocalAvailability = false }) {
   const select = document.getElementById(`${idPrefix}-select`);
   const custom = document.getElementById(`${idPrefix}-custom`);
   const applyBtn = document.getElementById(`${idPrefix}-apply`);
   const status = document.getElementById(`${idPrefix}-status`);
 
-  function populate(currentModel, curated) {
+  function populate(currentModel, curated, localModelNames) {
     select.innerHTML = "";
     for (const option of curated) {
       const opt = document.createElement("option");
       opt.value = option.name;
-      opt.textContent = option.recommended
+      let label = option.recommended
         ? `${option.name} — ${option.label} (Empfehlung)`
         : `${option.name} — ${option.label}`;
+      if (localModelNames && localModelNames.has(option.name)) {
+        label += " ✓ installiert";
+      }
+      opt.textContent = label;
       select.appendChild(opt);
     }
     const customOpt = document.createElement("option");
@@ -1310,7 +1343,28 @@ function initModelPicker({ idPrefix, endpoint }) {
       const response = await fetch(`/api/settings/${endpoint}`);
       if (!response.ok) return;
       const data = await response.json();
-      populate(data.model, data.curated);
+
+      // Only the Ollama picker has a meaningful "already pulled locally"
+      // concept (via Ollama's own model inventory) — the Whisper picker's
+      // sizes come from a wholly different, unrelated availability check
+      // (faster-whisper's own download-on-first-use cache), so this stays
+      // opt-in per picker instance rather than baked into this shared
+      // factory unconditionally.
+      let localModelNames = null;
+      if (annotateLocalAvailability) {
+        try {
+          const modelsResponse = await fetch("/api/ollama-models");
+          if (modelsResponse.ok) {
+            const models = await modelsResponse.json();
+            localModelNames = new Set(models.map((m) => m.name));
+          }
+        } catch (err) {
+          // Annotation is a nice-to-have — silently skip, the picker still
+          // works fine without it.
+        }
+      }
+
+      populate(data.model, data.curated, localModelNames);
     } catch (err) {
       // Systemstatus panel already surfaces server-unreachable via
       // loadDependencies(); nothing more to show here.
@@ -1359,8 +1413,41 @@ function initModelPicker({ idPrefix, endpoint }) {
   return { load };
 }
 
-const ollamaModelPicker = initModelPicker({ idPrefix: "ollama-model", endpoint: "ollama-model" });
+const ollamaModelPicker = initModelPicker({
+  idPrefix: "ollama-model",
+  endpoint: "ollama-model",
+  annotateLocalAvailability: true,
+});
 const whisperModelPicker = initModelPicker({ idPrefix: "whisper-model", endpoint: "whisper-model" });
+
+// Dedicated "which Ollama models are already pulled" list — independent of
+// (and, for simplicity, fetching separately from) ollamaModelPicker's own
+// annotation fetch above; this app already treats each Systemstatus piece
+// as its own independent fire-and-forget load (see openStatusModal()), and
+// this is a single cheap local request, not worth coordinating.
+const ollamaLocalModelsList = document.getElementById("ollama-local-models-list");
+
+async function loadLocalOllamaModels() {
+  try {
+    const response = await fetch("/api/ollama-models");
+    if (!response.ok) return;
+    const models = await response.json();
+    ollamaLocalModelsList.innerHTML = "";
+    ollamaLocalModelsList.classList.toggle("hidden", models.length === 0);
+    for (const model of models) {
+      const li = document.createElement("li");
+      li.textContent = model.name;
+      const size = document.createElement("span");
+      size.className = "ollama-local-model-size";
+      size.textContent = model.size;
+      li.appendChild(size);
+      ollamaLocalModelsList.appendChild(li);
+    }
+  } catch (err) {
+    // Nice-to-have display — silently skip on failure, same as the
+    // picker's own annotation fetch above.
+  }
+}
 
 // System status lives in a modal (like the help modal), opened from the
 // header — there's no persistent sidebar anymore for it to live in.
@@ -1370,6 +1457,7 @@ function openStatusModal() {
   loadDependencies();
   ollamaModelPicker.load();
   whisperModelPicker.load();
+  loadLocalOllamaModels();
   // Show whatever the automatic on-load check already found immediately
   // (no need to wait on a fresh network round trip just to open the
   // panel); the "Auf Updates prüfen" button still forces a fresh one.

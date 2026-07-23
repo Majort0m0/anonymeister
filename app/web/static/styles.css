@@ -1318,6 +1318,35 @@ body {
 .model-picker-status.warning {
   color: var(--warning);
 }
+.model-picker-hint {
+  margin: 0.7rem 0 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.ollama-local-models-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.ollama-local-models-list li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.ollama-local-model-size {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
 
 .version-info {
   margin-bottom: 1.1rem;
@@ -1424,6 +1453,28 @@ body {
 .dependency-fix-btn .spinner {
   border-color: color-mix(in srgb, var(--accent-contrast) 35%, transparent);
   border-top-color: var(--accent-contrast);
+}
+
+/* Terminal-style log for a live Ollama model pull (see fixDependency() in
+   app.js). Deliberately a FIXED dark palette rather than following the
+   app's own light/dark theme — the point is to read as an actual terminal,
+   the same way e.g. VS Code's integrated terminal or CI log viewers keep a
+   fixed dark palette regardless of the surrounding UI theme. */
+.pull-log {
+  display: block;
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.7rem;
+  max-height: 160px;
+  overflow-y: auto;
+  background: #0d1117;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* --- Footer --- */

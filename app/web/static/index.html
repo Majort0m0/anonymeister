@@ -483,13 +483,15 @@
         <p id="update-check-status" class="model-picker-status"></p>
       </div>
       <div class="model-picker">
-        <label for="ollama-model-select">Ollama-Modell (Tiefencheck &amp; Zusammenfassung)</label>
+        <label for="ollama-model-select">Ollama-Modell (Tiefencheck, Zusammenfassung &amp; Transkript-Korrektur)</label>
         <div class="model-picker-row">
           <select id="ollama-model-select"></select>
           <input type="text" id="ollama-model-custom" class="find-replace-input hidden" placeholder="z. B. llama3.1:8b">
           <button type="button" id="ollama-model-apply" class="secondary-btn">Übernehmen</button>
         </div>
         <p id="ollama-model-status" class="model-picker-status"></p>
+        <p class="model-picker-hint">Lokal installierte Ollama-Modelle:</p>
+        <ul id="ollama-local-models-list" class="ollama-local-models-list hidden"></ul>
       </div>
       <div class="model-picker">
         <label for="whisper-model-select">Whisper-Modellgröße (Audiotranskription)</label>

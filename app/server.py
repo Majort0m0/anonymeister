@@ -61,7 +61,7 @@ from app.config import (
 )
 from app.pipeline.pipeline import PendingState, analyze, analyze_file, finalize
 from app.pipeline.render_markdown import render_summary, render_transcript
-from app.pipeline.setup_check import attempt_auto_install, check_dependencies
+from app.pipeline.setup_check import attempt_auto_install, check_dependencies, list_ollama_models
 from app.progress_calibration import get_stage_durations, record_stage_duration
 from app.schemas import (
     DetectedCategory,
@@ -193,6 +193,13 @@ class _Job:
     eta_seconds: float | None = None
     overtime: bool = False
     result: dict | None = None
+    # Only ever set for a dependency-fix job pulling an Ollama model (see
+    # _run_dependency_fix_job) — the ordered terminal-style log lines from
+    # setup_check.py's _ollama_pull_via_http(), re-sent as a full snapshot
+    # on every update (see that function's docstring for why). None for
+    # every other job kind; the frontend treats a present, non-empty list
+    # as "render the terminal-style log" and ignores the field otherwise.
+    pull_log: list[str] | None = None
     _last_event_time: float | None = None
     created_at: float = field(default_factory=time.monotonic)
     # Snapshotted once when the job's callbacks are built (see
@@ -648,7 +655,15 @@ def get_progress(job_id: str) -> JSONResponse:
         # that still says done:false (the client would then get a phantom
         # 404 on its next poll for a job that actually succeeded).
         done = job.done
-        if not done:
+        # A dependency-fix job pulling an Ollama model (job.pull_log is not
+        # None) manages job.percent directly from real byte counts (see
+        # _run_dependency_fix_job) and never populates job.plan — calling
+        # _recompute_progress() for it would immediately zero job.percent
+        # back out (it resets to 0.0 whenever job.plan is empty, per its own
+        # docstring), clobbering every real update the moment this route is
+        # polled. The calibrated-duration model this recompute implements
+        # doesn't apply here anyway: Ollama already reports real progress.
+        if not done and job.pull_log is None:
             # Live-extrapolate from wall-clock time, not just the last
             # reported checkpoint — see _recompute_progress()'s docstring.
             _recompute_progress(job)
@@ -659,6 +674,7 @@ def get_progress(job_id: str) -> JSONResponse:
             "percent": round(job.percent, 1),
             "eta_seconds": round(job.eta_seconds, 1) if job.eta_seconds is not None else None,
             "result": job.result,
+            "pull_log": job.pull_log,
         }
 
     if done:
@@ -752,13 +768,36 @@ def get_dependencies() -> list[dict]:
     return [status.model_dump() for status in check_dependencies()]
 
 
+@app.get("/api/ollama-models")
+def get_ollama_models() -> list[dict]:
+    return list_ollama_models()
+
+
+def _run_dependency_fix_job(job: _Job, name: str) -> None:
+    def on_pull_progress(lines: list[str], percent: float | None) -> None:
+        # Written directly under job.lock rather than through
+        # _make_callbacks()'s on_progress/on_plan — those drive the
+        # calibrated-duration ETA model (see get_progress()'s matching
+        # comment for why that's actively wrong for this job kind), whereas
+        # real byte counts from Ollama are already an accurate percent with
+        # nothing to calibrate.
+        with job.lock:
+            job.pull_log = lines
+            if percent is not None:
+                job.percent = percent
+
+    def build_result() -> dict:
+        status = attempt_auto_install(name, on_pull_progress=on_pull_progress)
+        return status.model_dump()
+
+    _run_job(job, build_result)
+
+
 @app.post("/api/dependencies/fix")
 def fix_dependency(payload: DependencyFixRequest) -> JSONResponse:
-    try:
-        status = attempt_auto_install(payload.name)
-        return JSONResponse(status.model_dump())
-    except Exception as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
+    job_id, job = _create_job()
+    threading.Thread(target=_run_dependency_fix_job, args=(job, payload.name), daemon=True).start()
+    return JSONResponse({"job_id": job_id})
 
 
 @app.get("/api/settings/ollama-model")

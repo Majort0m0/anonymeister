@@ -22,6 +22,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from typing import Callable
 
 from app.config import OLLAMA_HOST, SPACY_MODELS
 from app.schemas import DependencyStatus
@@ -32,13 +33,16 @@ _OLLAMA_PULL_TIMEOUT = 600
 _SPACY_DOWNLOAD_TIMEOUT = 600
 
 
-def _ollama_tags() -> list[str] | None:
-    """List model names Ollama reports via its HTTP API, or None if
-    unreachable. Deliberately HTTP-based rather than shelling out to the
-    "ollama" CLI: OLLAMA_HOST may point at a remote/sibling-container Ollama
-    (see Dockerfile/docker-compose.yml) that has no local CLI binary at all,
-    and this must work identically for that case and for the native desktop
-    app talking to a local Ollama."""
+def _ollama_tags_payload() -> list[dict] | None:
+    """Raw `models` list from Ollama's /api/tags, or None if unreachable —
+    shared by _ollama_tags() (names only, for the single-configured-model
+    check) and list_ollama_models() (full inventory, for the Systemstatus
+    display) so the request + error handling exists in exactly one place.
+    Deliberately HTTP-based rather than shelling out to the "ollama" CLI:
+    OLLAMA_HOST may point at a remote/sibling-container Ollama (see
+    Dockerfile/docker-compose.yml) that has no local CLI binary at all, and
+    this must work identically for that case and for the native desktop app
+    talking to a local Ollama."""
     try:
         with urllib.request.urlopen(
             f"{OLLAMA_HOST}/api/tags", timeout=_OLLAMA_HTTP_TIMEOUT
@@ -46,7 +50,60 @@ def _ollama_tags() -> list[str] | None:
             payload = json.loads(response.read())
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         return None
-    return [model.get("name", "") for model in payload.get("models", [])]
+    return payload.get("models", [])
+
+
+def _ollama_tags() -> list[str] | None:
+    """List model names Ollama reports via its HTTP API, or None if
+    unreachable."""
+    models = _ollama_tags_payload()
+    if models is None:
+        return None
+    return [model.get("name", "") for model in models]
+
+
+def _format_bytes(n: float) -> str:
+    """Human-readable byte size for pull-progress lines and the local-model
+    list, e.g. "2.3 GB" — decimal (1000-based) units, matching Ollama's own
+    CLI/API convention (`ollama list` reports sizes the same way), not the
+    binary (1024-based) convention a naive KB/MB/GB implementation would
+    default to. Using binary division here would silently disagree with
+    what `ollama list` shows for the exact same model (e.g. a real 7.16 GB
+    model would show as "6.7 GB" instead of "7.2 GB") — confirmed against
+    this app's own installed Ollama."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1000 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1000
+    return f"{n:.1f} TB"
+
+
+def _progress_bar(percent: float, width: int = 20) -> str:
+    """Block-character progress bar matching the shape `ollama pull` itself
+    draws in a real terminal (e.g. "▕████████░░░░░░░░░░▏") — used in the
+    pull-progress lines below so the in-app display reads as authentically
+    terminal-like as the text format allows, not just a bare percentage."""
+    filled = max(0, min(width, round(width * percent / 100)))
+    return "▕" + "█" * filled + "░" * (width - filled) + "▏"
+
+
+def list_ollama_models() -> list[dict]:
+    """Full local model inventory (name + human-readable size), for the
+    Systemstatus panel's "locally available models" display. Unlike
+    _ollama_tags() above (which only this module needs, to check ONE
+    specific configured model by name), this exposes the complete picture
+    the frontend shows the user. Returns an empty list if Ollama isn't
+    reachable — matching how the rest of this app treats Ollama as an
+    always-optional dependency, not surfacing an error for what's a
+    routine, expected state (no Ollama installed/running yet)."""
+    models = _ollama_tags_payload()
+    if models is None:
+        return []
+    return [
+        {"name": model["name"], "size": _format_bytes(model.get("size", 0))}
+        for model in models
+        if model.get("name")
+    ]
 
 
 def _check_ollama() -> DependencyStatus:
@@ -102,21 +159,111 @@ def _check_ollama_model() -> DependencyStatus:
     )
 
 
-def _ollama_pull_via_http(model: str) -> bool:
+def _ollama_pull_via_http(
+    model: str,
+    on_pull_progress: Callable[[list[str], float | None], None] | None = None,
+) -> bool:
     """Trigger a model pull through Ollama's HTTP API (POST /api/pull,
     streaming NDJSON progress) instead of the "ollama" CLI — see
-    _ollama_tags() for why the CLI can't be relied on here."""
+    _ollama_tags() for why the CLI can't be relied on here.
+
+    Ollama streams one JSON object per line as the pull advances: first
+    {"status": "pulling manifest"}, then many {"status": "pulling <digest>",
+    "digest": "sha256:...", "total": N, "completed": M} lines per layer as
+    it downloads (one per network read, not one per percent — a large layer
+    can produce thousands of these), then {"status": "verifying sha256
+    digest"}, {"status": "writing manifest"}, {"status": "success"} — this
+    last line is the only real success signal. A connection that drops
+    mid-download closes the HTTP response cleanly from Python's perspective
+    (chunked-transfer decoding treats an unexpected close as plain EOF, not
+    an error — confirmed directly against this function), so `for raw_line
+    in response:` just ends the loop with no exception at all if that
+    happens; without explicitly checking for the "success" status, this
+    function would return True for a pull that never actually finished.
+
+    `on_pull_progress`, if given, is called after every parsed line with the
+    FULL current ordered list of human-readable terminal-style text lines
+    plus the overall percent computed from real byte counts across every
+    layer seen so far — a full snapshot each time, not a diff, matching how
+    this app's GET /api/progress/{job_id} already returns a full snapshot
+    per poll rather than incremental updates (the log stays small, at most
+    a few dozen lines, so re-sending it whole is simpler and more robust
+    than diffing). Per-layer lines are updated IN PLACE (keyed by digest)
+    rather than appended on every tick — a real terminal overwrites the
+    line too; appending every tick would flood the log with near-duplicate
+    lines for a large layer.
+    """
     request = urllib.request.Request(
         f"{OLLAMA_HOST}/api/pull",
         data=json.dumps({"name": model}).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+
+    lines: list[str] = []
+    line_index: dict[str, int] = {}
+    layer_progress: dict[str, tuple[int, int]] = {}  # digest -> (completed, total)
+
+    def _set_line(key: str, text: str) -> None:
+        if key in line_index:
+            lines[line_index[key]] = text
+        else:
+            line_index[key] = len(lines)
+            lines.append(text)
+
+    def _overall_percent() -> float | None:
+        if not layer_progress:
+            return None
+        completed = sum(c for c, _ in layer_progress.values())
+        total = sum(t for _, t in layer_progress.values())
+        if total <= 0:
+            return None
+        # Clamped like _recompute_progress()'s equivalent elsewhere in the
+        # job-progress system — Ollama can report a completed byte count
+        # that transiently exceeds total for a layer near the end of its
+        # download, which would otherwise surface as e.g. "103.4%".
+        return round(min(100.0, completed / total * 100), 1)
+
+    saw_success = False
     try:
         with urllib.request.urlopen(request, timeout=_OLLAMA_PULL_TIMEOUT) as response:
-            for _ in response:
-                pass  # drain streamed progress lines; we only care that it completes
-        return True
+            for raw_line in response:
+                if not raw_line.strip():
+                    continue
+                try:
+                    event = json.loads(raw_line)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    # A truncated line (e.g. a network hiccup cutting a line
+                    # off mid multi-byte character) decodes as garbage, not
+                    # as an error condition worth failing the whole pull
+                    # over — skip it and keep reading, same as a plain
+                    # malformed JSON line.
+                    continue
+
+                status = event.get("status", "")
+                digest = event.get("digest")
+                if digest:
+                    total = event.get("total", 0)
+                    completed = event.get("completed", 0)
+                    layer_progress[digest] = (completed, total)
+                    short_digest = digest.removeprefix("sha256:")[:12]
+                    if total > 0:
+                        percent = min(100.0, completed / total * 100)
+                        text = (
+                            f"pulling {short_digest}: {_progress_bar(percent)} {percent:5.1f}% "
+                            f"({_format_bytes(completed)}/{_format_bytes(total)})"
+                        )
+                    else:
+                        text = f"pulling {short_digest}: {status}"
+                    _set_line(digest, text)
+                elif status:
+                    _set_line(status, status)
+                    if status == "success":
+                        saw_success = True
+
+                if on_pull_progress:
+                    on_pull_progress(list(lines), _overall_percent())
+        return saw_success
     except (urllib.error.URLError, OSError):
         return False
 
@@ -178,10 +325,27 @@ def check_dependencies() -> list[DependencyStatus]:
     return statuses
 
 
-def attempt_auto_install(name: str) -> DependencyStatus:
+def attempt_auto_install(
+    name: str,
+    on_pull_progress: Callable[[list[str], float | None], None] | None = None,
+) -> DependencyStatus:
     if name == f"ollama model {get_ollama_model()}":
-        _ollama_pull_via_http(get_ollama_model())
-        return _check_ollama_model()
+        pulled = _ollama_pull_via_http(get_ollama_model(), on_pull_progress=on_pull_progress)
+        status = _check_ollama_model()
+        if not pulled and not status.available:
+            # The pull stream ended without ever reporting "success" (see
+            # _ollama_pull_via_http()'s docstring — a dropped connection is
+            # otherwise silent) and the model genuinely still isn't there —
+            # give a specific reason instead of the generic "not found"
+            # _check_ollama_model() would otherwise report, which would
+            # look identical to never having tried at all.
+            return DependencyStatus(
+                name=status.name,
+                available=False,
+                detail="Der Download wurde unterbrochen, bevor er abgeschlossen war.",
+                install_hint=status.install_hint,
+            )
+        return status
 
     if name.startswith("spaCy model "):
         model_name = name.removeprefix("spaCy model ")
