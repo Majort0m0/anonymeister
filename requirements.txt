@@ -17,3 +17,4 @@ pyperclip
 ollama
 langdetect
 jinja2
+certifi

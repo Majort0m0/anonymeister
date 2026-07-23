@@ -28,16 +28,34 @@ always passes `force=True` to bypass it.
 from __future__ import annotations
 
 import json
+import ssl
 import time
 import urllib.error
 import urllib.request
+
+import certifi
 
 from app.schemas import UpdateCheckResult
 from app.version import APP_VERSION
 
 _RELEASES_API_URL = "https://api.github.com/repos/Majort0m0/anonymeister/releases/latest"
-_HTTP_TIMEOUT = 5
+_HTTP_TIMEOUT = 10
 _CACHE_TTL_SECONDS = 6 * 60 * 60
+
+# Explicit CA bundle rather than relying on urlopen's implicit
+# ssl.create_default_context(), which falls back to whatever default verify
+# paths are compiled into the OpenSSL/LibreSSL library the frozen app's
+# Python happened to be linked against at build time. Observed in practice:
+# a PyInstaller build produced by GitHub Actions' macos-latest runner
+# consistently failed this exact request with a caught SSLError on a
+# developer's Mac, while an otherwise-identical build made locally (same
+# source, same machine it then ran on) worked fine every time — the CI
+# runner's Python resolves a default cert path that doesn't hold up once
+# bundled and run on a different machine. certifi ships its own
+# self-contained, regularly-updated CA bundle and is already pulled in
+# transitively (requests/httpx/httpcore), so pointing the SSL context at it
+# explicitly removes the dependency on whichever machine did the build.
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 _cache: UpdateCheckResult | None = None
 _cache_time: float = 0.0
@@ -73,7 +91,9 @@ def _fetch_latest_release() -> UpdateCheckResult:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT) as response:
+        with urllib.request.urlopen(
+            request, timeout=_HTTP_TIMEOUT, context=_SSL_CONTEXT
+        ) as response:
             payload = json.loads(response.read())
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         return UpdateCheckResult(
