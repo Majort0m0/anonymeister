@@ -21,4 +21,4 @@ now the only step a release needs on the version-number side:
   drift that caused the original bug can't happen silently again.
 """
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
